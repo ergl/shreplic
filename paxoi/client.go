@@ -94,6 +94,14 @@ func (c *Client) reinitFastAndSlowAcks() {
 func (c *Client) handleMsgs() {
 	for {
 		select {
+		case m := <-c.cs.replyChan:
+			reply := m.(*MReply)
+			c.handleReply(reply)
+
+		case m := <-c.cs.readReplyChan:
+			reply := m.(*MReadReply)
+			c.handleReadReply(reply)
+
 		case m := <-c.cs.fastAckChan:
 			fastAck := m.(*MFastAck)
 			c.handleFastAck(fastAck, false)
@@ -146,14 +154,6 @@ func (c *Client) handleMsgs() {
 				}
 				c.handleFastAck(fastAck, false)
 			}
-
-		case m := <-c.cs.replyChan:
-			reply := m.(*MReply)
-			c.handleReply(reply)
-
-		case m := <-c.cs.readReplyChan:
-			reply := m.(*MReadReply)
-			c.handleReadReply(reply)
 		}
 	}
 }
@@ -203,7 +203,6 @@ func (c *Client) handleFastAndSlowAcks(leaderMsg interface{}, msgs []interface{}
 	c.delivered[cmdId] = struct{}{}
 
 	c.Println("Slow Paths:", c.slowPaths)
-	println("Slow Paths:", c.slowPaths)
 	c.Println("Returning:", c.val.String())
 	c.reinitFastAndSlowAcks()
 	c.ResChan <- c.val

@@ -266,9 +266,17 @@ func (r *Replica) run() {
 					}
 					return r.getDepAndUpdateInfo(propose.Command, cmdId)
 				}()
-				desc := r.getCmdDesc(cmdId, propose, dep)
-				if desc == nil {
-					log.Fatal("Got propose for the delivered command ", cmdId)
+				if r.leader() == r.Id {
+					desc := r.getCmdDesc(cmdId, nil, dep)
+					if desc == nil {
+						log.Fatal("Got propose for the delivered command ", cmdId)
+					}
+					r.handlePropose(propose, desc, cmdId)
+				} else {
+					desc := r.getCmdDesc(cmdId, propose, dep)
+					if desc == nil {
+						log.Fatal("Got propose for the delivered command ", cmdId)
+					}
 				}
 			}
 

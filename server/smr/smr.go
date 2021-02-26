@@ -442,9 +442,9 @@ func (r *Replica) replicaListener(rid int, reader *bufio.Reader) {
 				if err = obj.Unmarshal(reader); err != nil {
 					break
 				}
-				go func() {
+				go func(obj fastrpc.Serializable) {
 					p.Chan <- obj
-				}()
+				}(obj)
 			} else {
 				log.Fatal("Error: received unknown message type ", msgType, " from ", rid)
 			}
@@ -538,9 +538,9 @@ func (r *Replica) clientListener(conn net.Conn) {
 				if err = obj.Unmarshal(reader); err != nil {
 					break
 				}
-				go func() {
+				go func(obj fastrpc.Serializable) {
 					p.Chan <- obj
-				}()
+				}(obj)
 			} else {
 				log.Fatal("Error: received unknown client message ", msgType)
 			}

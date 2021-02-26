@@ -21,6 +21,8 @@ type Replica struct {
 	cballot int32
 	status  int
 
+	optimized bool
+
 	Q smr.Majority
 
 	isLeader    bool
@@ -37,6 +39,7 @@ type Replica struct {
 	delivered cmap.ConcurrentMap
 
 	sender  smr.Sender
+	batcher *Batcher
 	history []commandStaticDesc
 
 	cs CommunicationSupply
@@ -52,7 +55,6 @@ type commandDesc struct {
 	cmdId CommandId
 
 	cmd     state.Command
-	sent    bool
 	phase   int
 	cmdSlot int
 	propose *smr.GPropose
@@ -77,7 +79,7 @@ type commandStaticDesc struct {
 }
 
 func NewReplica(rid int, addrs []string, exec, dr bool,
-	pl, f int, qfile string, ps map[string]struct{}) *Replica {
+	pl, f int, qfile string, opt bool, ps map[string]struct{}) *Replica {
 	cmap.SHARD_COUNT = 32768
 
 	r := &Replica{
@@ -86,6 +88,8 @@ func NewReplica(rid int, addrs []string, exec, dr bool,
 		ballot:  0,
 		cballot: 0,
 		status:  NORMAL,
+
+		optimized: opt,
 
 		isLeader:    false,
 		lastCmdSlot: 0,
@@ -115,6 +119,7 @@ func NewReplica(rid int, addrs []string, exec, dr bool,
 
 	r.Q = smr.NewMajorityOf(r.N)
 	r.sender = smr.NewSender(r.Replica)
+	r.batcher = NewBatcher(r, 16)
 
 	_, leaderIds, err := smr.NewQuorumsFromFile(qfile, r.Replica)
 	if err == nil && len(leaderIds) != 0 {
@@ -167,13 +172,15 @@ func (r *Replica) run() {
 		case propose := <-r.ProposeChan:
 			if r.isLeader {
 				dep := r.leaderUnsync(propose.Command, r.lastCmdSlot)
-				desc := r.getCmdDesc(r.lastCmdSlot, propose, dep)
+				desc := r.getCmdDesc(r.lastCmdSlot, nil, dep)
 				if desc == nil {
 					log.Fatal("Got propose for the delivered command:",
 						propose.ClientId, propose.CommandId)
 				}
+				r.handlePropose(propose, desc, r.lastCmdSlot, dep)
 				r.lastCmdSlot++
 			} else {
+				// TODO: save payload if `optimized == true`
 				cmdId.ClientId = propose.ClientId
 				cmdId.SeqNum = propose.CommandId
 				r.proposes.Set(cmdId.String(), propose)
@@ -204,6 +211,7 @@ func (r *Replica) run() {
 			aacks := m.(*MAAcks)
 			for _, a := range aacks.Accepts {
 				ta := a
+				r.slots[a.CmdId] = a.CmdSlot
 				r.getCmdDesc(a.CmdSlot, &ta, -1)
 			}
 			for _, b := range aacks.Acks {
@@ -232,7 +240,6 @@ func (r *Replica) run() {
 }
 
 func (r *Replica) handlePropose(msg *smr.GPropose, desc *commandDesc, slot int, dep int) {
-
 	if r.status != NORMAL || desc.propose != nil {
 		return
 	}
@@ -263,7 +270,7 @@ func (r *Replica) handlePropose(msg *smr.GPropose, desc *commandDesc, slot int, 
 	}
 
 	r.deliver(desc, slot)
-	r.sender.SendToAll(acc, r.cs.acceptRPC)
+	r.batcher.SendAccept(acc)
 	r.handleAccept(acc, desc)
 }
 
@@ -287,6 +294,20 @@ func (r *Replica) handleAccept(msg *MAccept, desc *commandDesc) {
 	if r.isLeader {
 		r.handleAcceptAck(ack, desc)
 	} else {
+		if r.optimized {
+			prop, exists := r.proposes.Get(desc.cmdId.String())
+			if !exists {
+				return
+			}
+			propose := prop.(*smr.GPropose)
+			recAck := &MRecordAck{
+				Replica: r.Id,
+				Ballot:  r.ballot,
+				CmdId:   desc.cmdId,
+				Ok:      ORDERED,
+			}
+			r.sender.SendToClient(propose.ClientId, recAck, r.cs.recordAckRPC)
+		}
 		r.sender.SendTo(msg.Replica, ack, r.cs.acceptAckRPC)
 	}
 }
@@ -433,10 +454,6 @@ func (r *Replica) deliver(desc *commandDesc, slot int) {
 		}
 
 		if r.isLeader {
-			if desc.dep != -1 && !r.committed.Has(strconv.Itoa(desc.dep)) {
-				return
-			}
-
 			if desc.phase == COMMIT {
 				rep := &MSyncReply{
 					Replica: r.Id,
@@ -452,10 +469,13 @@ func (r *Replica) deliver(desc *commandDesc, slot int) {
 					CmdId:   desc.cmdId,
 					Rep:     desc.val,
 				}
+				if desc.dep != -1 && !r.committed.Has(strconv.Itoa(desc.dep)) {
+					rep.Ok = FALSE
+				} else {
+					rep.Ok = TRUE
+				}
 				r.sender.SendToClient(desc.propose.ClientId, rep, r.cs.replyRPC)
 			}
-
-			desc.sent = true
 		}
 
 		if desc.phase == COMMIT {
@@ -519,7 +539,6 @@ func (r *Replica) newDesc() *commandDesc {
 	desc.active = true
 	desc.phase = START
 	desc.seq = (r.routineCount >= MaxDescRoutines)
-	desc.sent = false
 	desc.propose = nil
 	desc.val = nil
 	desc.cmdId.SeqNum = -42

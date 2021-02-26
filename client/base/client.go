@@ -190,9 +190,9 @@ func (c *Client) Connect() error {
 				if err = obj.Unmarshal(reader); err != nil {
 					break
 				}
-				go func() {
+				go func(obj fastrpc.Serializable) {
 					p.Chan <- obj
-				}()
+				}(obj)
 			}
 		}(c.readers[i])
 	}

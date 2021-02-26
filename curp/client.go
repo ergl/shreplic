@@ -16,11 +16,13 @@ import (
 type Client struct {
 	*base.SimpleClient
 
-	acks *smr.MsgSet
+	acks  *smr.MsgSet
+	macks *smr.MsgSet
 
 	N         int
 	t         *Timer
 	Q         smr.ThreeQuarters
+	M         smr.Majority
 	cs        CommunicationSupply
 	num       int
 	val       state.Value
@@ -47,7 +49,8 @@ func NewClient(maddr, collocated string, mport, reqNum, writes, psize, conflict 
 	// args must be of the form "-N <rep_num>"
 	f := flag.NewFlagSet("custom CURP arguments", flag.ExitOnError)
 	repNum := f.Int("N", -1, "Number of replicas")
-	pclients := f.Int("pclients", 0, "Number of clients already running on other machines")
+	_ = f.Int("pclients", 0, "Number of clients already running on other machines")
+
 	f.Parse(strings.Fields(args))
 	if *repNum == -1 {
 		f.Usage()
@@ -66,6 +69,7 @@ func NewClient(maddr, collocated string, mport, reqNum, writes, psize, conflict 
 		N:         *repNum,
 		t:         NewTimer(),
 		Q:         smr.NewThreeQuartersOf(*repNum),
+		M:         smr.NewMajorityOf(*repNum),
 		num:       num,
 		val:       nil,
 		ready:     make(chan struct{}, 1),
@@ -83,12 +87,14 @@ func NewClient(maddr, collocated string, mport, reqNum, writes, psize, conflict 
 	}
 
 	c.ReadTable = true
-	i := 0
+	// Do not generate new key for each new request for fair comparison
+	// TODO: convert this into the option
+	/*i := 0
 	c.GetClientKey = func() state.Key {
 		k := 100 + i + (reqNum * (c.num + *pclients))
 		i++
 		return state.Key(k)
-	}
+	}*/
 
 	first := true
 	c.WaitResponse = func() error {
@@ -126,6 +132,11 @@ func (c *Client) reinitAcks() {
 
 	c.acks.Free()
 	c.acks = c.acks.ReinitMsgSet(c.Q, accept, func(interface{}) {}, c.handleAcks)
+
+	c.macks.Free()
+	c.macks = c.macks.ReinitMsgSet(c.M, func(_, _ interface{}) bool {
+		return true
+	}, func(interface{}) {}, c.handleAcks)
 }
 
 func (c *Client) handleMsgs() {
@@ -172,7 +183,7 @@ func (c *Client) handleReply(r *MReply) {
 		Replica: r.Replica,
 		Ballot:  r.Ballot,
 		CmdId:   r.CmdId,
-		Ok:      TRUE,
+		Ok:      r.Ok,
 	}
 	c.val = state.Value(r.Rep)
 	c.handleRecordAck(ack, true)
@@ -190,9 +201,14 @@ func (c *Client) handleRecordAck(r *MRecordAck, fromLeader bool) {
 
 	if fromLeader {
 		c.leader = r.Replica
+		c.macks.Add(r.Replica, true, r)
 	}
 
-	c.acks.Add(r.Replica, fromLeader, r)
+	if r.Ok == ORDERED {
+		c.macks.Add(r.Replica, false, r)
+	} else {
+		c.acks.Add(r.Replica, fromLeader, r)
+	}
 }
 
 func (c *Client) handleSyncReply(rep *MSyncReply) {
@@ -223,6 +239,10 @@ func (c *Client) handleSyncReply(rep *MSyncReply) {
 
 func (c *Client) handleAcks(leaderMsg interface{}, msgs []interface{}) {
 	if leaderMsg == nil {
+		return
+	}
+
+	if _, exists := c.delivered[leaderMsg.(*MRecordAck).CmdId.SeqNum]; exists {
 		return
 	}
 

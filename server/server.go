@@ -32,6 +32,7 @@ var (
 	doPaxoi     = flag.Bool("paxoi", false, "Use Paxoi as the replication protocol")
 	doN2paxos   = flag.Bool("n2paxos", false, "Use n²Paxos as the replication protocol")
 	doCurp      = flag.Bool("curp", false, "Use CURP as the replication protocol")
+	doOptCurp   = flag.Bool("curpOpt", false, "Use optimized CURP as the replication protocol")
 	cpuprofile  = flag.String("cpuprofile", "", "Cpu profile")
 	thrifty     = flag.Bool("thrifty", false, "Use only as many messages as strictly required")
 	exec        = flag.Bool("exec", true, "Execute commands")
@@ -107,10 +108,16 @@ func main() {
 			*dreply, *optExec, *poolLevel, *maxfailures, *qfile, ps)
 		rpc.Register(rep)
 	} else if *doCurp {
-		log.Println("Starting n²Paxos replica...")
+		log.Println("Starting CURP replica...")
 		curp.MaxDescRoutines = *descNum
 		rep := curp.NewReplica(replicaId, nodeList, *exec,
-			*dreply, *poolLevel, *maxfailures, *qfile, ps)
+			*dreply, *poolLevel, *maxfailures, *qfile, false, ps)
+		rpc.Register(rep)
+	} else if *doOptCurp {
+		log.Println("Starting optimized CURP replica...")
+		curp.MaxDescRoutines = *descNum
+		rep := curp.NewReplica(replicaId, nodeList, *exec,
+			*dreply, *poolLevel, *maxfailures, *qfile, true, ps)
 		rpc.Register(rep)
 	} else {
 		log.Println("Starting Paxos replica...")

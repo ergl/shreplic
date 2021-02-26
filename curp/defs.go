@@ -29,6 +29,7 @@ const (
 	HISTORY_SIZE = 10010001
 	TRUE         = uint8(1)
 	FALSE        = uint8(0)
+	ORDERED      = uint8(2)
 )
 
 var MaxDescRoutines = 100
@@ -47,6 +48,7 @@ type MReply struct {
 	Ballot  int32
 	CmdId   CommandId
 	Rep     []byte
+	Ok      uint8
 }
 
 type MAccept struct {
@@ -173,23 +175,23 @@ type byteReader interface {
 	ReadByte() (c byte, err error)
 }
 
-func (t *MRecordAck) BinarySize() (nbytes int, sizeKnown bool) {
-	return 17, true
+func (t *MCommit) BinarySize() (nbytes int, sizeKnown bool) {
+	return 16, true
 }
 
-type MRecordAckCache struct {
+type MCommitCache struct {
 	mu    sync.Mutex
-	cache []*MRecordAck
+	cache []*MCommit
 }
 
-func NewMRecordAckCache() *MRecordAckCache {
-	c := &MRecordAckCache{}
-	c.cache = make([]*MRecordAck, 0)
+func NewMCommitCache() *MCommitCache {
+	c := &MCommitCache{}
+	c.cache = make([]*MCommit, 0)
 	return c
 }
 
-func (p *MRecordAckCache) Get() *MRecordAck {
-	var t *MRecordAck
+func (p *MCommitCache) Get() *MCommit {
+	var t *MCommit
 	p.mu.Lock()
 	if len(p.cache) > 0 {
 		t = p.cache[len(p.cache)-1]
@@ -197,19 +199,19 @@ func (p *MRecordAckCache) Get() *MRecordAck {
 	}
 	p.mu.Unlock()
 	if t == nil {
-		t = &MRecordAck{}
+		t = &MCommit{}
 	}
 	return t
 }
-func (p *MRecordAckCache) Put(t *MRecordAck) {
+func (p *MCommitCache) Put(t *MCommit) {
 	p.mu.Lock()
 	p.cache = append(p.cache, t)
 	p.mu.Unlock()
 }
-func (t *MRecordAck) Marshal(wire io.Writer) {
-	var b [17]byte
+func (t *MCommit) Marshal(wire io.Writer) {
+	var b [16]byte
 	var bs []byte
-	bs = b[:17]
+	bs = b[:16]
 	tmp32 := t.Replica
 	bs[0] = byte(tmp32)
 	bs[1] = byte(tmp32 >> 8)
@@ -220,32 +222,28 @@ func (t *MRecordAck) Marshal(wire io.Writer) {
 	bs[5] = byte(tmp32 >> 8)
 	bs[6] = byte(tmp32 >> 16)
 	bs[7] = byte(tmp32 >> 24)
-	tmp32 = t.CmdId.ClientId
-	bs[8] = byte(tmp32)
-	bs[9] = byte(tmp32 >> 8)
-	bs[10] = byte(tmp32 >> 16)
-	bs[11] = byte(tmp32 >> 24)
-	tmp32 = t.CmdId.SeqNum
-	bs[12] = byte(tmp32)
-	bs[13] = byte(tmp32 >> 8)
-	bs[14] = byte(tmp32 >> 16)
-	bs[15] = byte(tmp32 >> 24)
-	bs[16] = byte(t.Ok)
+	tmp64 := t.CmdSlot
+	bs[8] = byte(tmp64)
+	bs[9] = byte(tmp64 >> 8)
+	bs[10] = byte(tmp64 >> 16)
+	bs[11] = byte(tmp64 >> 24)
+	bs[12] = byte(tmp64 >> 32)
+	bs[13] = byte(tmp64 >> 40)
+	bs[14] = byte(tmp64 >> 48)
+	bs[15] = byte(tmp64 >> 56)
 	wire.Write(bs)
 }
 
-func (t *MRecordAck) Unmarshal(wire io.Reader) error {
-	var b [17]byte
+func (t *MCommit) Unmarshal(wire io.Reader) error {
+	var b [16]byte
 	var bs []byte
-	bs = b[:17]
-	if _, err := io.ReadAtLeast(wire, bs, 17); err != nil {
+	bs = b[:16]
+	if _, err := io.ReadAtLeast(wire, bs, 16); err != nil {
 		return err
 	}
 	t.Replica = int32((uint32(bs[0]) | (uint32(bs[1]) << 8) | (uint32(bs[2]) << 16) | (uint32(bs[3]) << 24)))
 	t.Ballot = int32((uint32(bs[4]) | (uint32(bs[5]) << 8) | (uint32(bs[6]) << 16) | (uint32(bs[7]) << 24)))
-	t.CmdId.ClientId = int32((uint32(bs[8]) | (uint32(bs[9]) << 8) | (uint32(bs[10]) << 16) | (uint32(bs[11]) << 24)))
-	t.CmdId.SeqNum = int32((uint32(bs[12]) | (uint32(bs[13]) << 8) | (uint32(bs[14]) << 16) | (uint32(bs[15]) << 24)))
-	t.Ok = uint8(bs[16])
+	t.CmdSlot = int((uint64(bs[8]) | (uint64(bs[9]) << 8) | (uint64(bs[10]) << 16) | (uint64(bs[11]) << 24) | (uint64(bs[12]) << 32) | (uint64(bs[13]) << 40) | (uint64(bs[14]) << 48) | (uint64(bs[15]) << 56)))
 	return nil
 }
 
@@ -320,224 +318,6 @@ func (t *MSyncReply) Marshal(wire io.Writer) {
 }
 
 func (t *MSyncReply) Unmarshal(rr io.Reader) error {
-	var wire byteReader
-	var ok bool
-	if wire, ok = rr.(byteReader); !ok {
-		wire = bufio.NewReader(rr)
-	}
-	var b [16]byte
-	var bs []byte
-	bs = b[:16]
-	if _, err := io.ReadAtLeast(wire, bs, 16); err != nil {
-		return err
-	}
-	t.Replica = int32((uint32(bs[0]) | (uint32(bs[1]) << 8) | (uint32(bs[2]) << 16) | (uint32(bs[3]) << 24)))
-	t.Ballot = int32((uint32(bs[4]) | (uint32(bs[5]) << 8) | (uint32(bs[6]) << 16) | (uint32(bs[7]) << 24)))
-	t.CmdId.ClientId = int32((uint32(bs[8]) | (uint32(bs[9]) << 8) | (uint32(bs[10]) << 16) | (uint32(bs[11]) << 24)))
-	t.CmdId.SeqNum = int32((uint32(bs[12]) | (uint32(bs[13]) << 8) | (uint32(bs[14]) << 16) | (uint32(bs[15]) << 24)))
-	alen1, err := binary.ReadVarint(wire)
-	if err != nil {
-		return err
-	}
-	t.Rep = make([]byte, alen1)
-	for i := int64(0); i < alen1; i++ {
-		bs = b[:1]
-		if _, err := io.ReadAtLeast(wire, bs, 1); err != nil {
-			return err
-		}
-		t.Rep[i] = byte(bs[0])
-	}
-	return nil
-}
-
-func (t *MAAcks) BinarySize() (nbytes int, sizeKnown bool) {
-	return 0, false
-}
-
-type MAAcksCache struct {
-	mu    sync.Mutex
-	cache []*MAAcks
-}
-
-func NewMAAcksCache() *MAAcksCache {
-	c := &MAAcksCache{}
-	c.cache = make([]*MAAcks, 0)
-	return c
-}
-
-func (p *MAAcksCache) Get() *MAAcks {
-	var t *MAAcks
-	p.mu.Lock()
-	if len(p.cache) > 0 {
-		t = p.cache[len(p.cache)-1]
-		p.cache = p.cache[0:(len(p.cache) - 1)]
-	}
-	p.mu.Unlock()
-	if t == nil {
-		t = &MAAcks{}
-	}
-	return t
-}
-func (p *MAAcksCache) Put(t *MAAcks) {
-	p.mu.Lock()
-	p.cache = append(p.cache, t)
-	p.mu.Unlock()
-}
-func (t *MAAcks) Marshal(wire io.Writer) {
-	var b [10]byte
-	var bs []byte
-	bs = b[:]
-	alen1 := int64(len(t.Acks))
-	if wlen := binary.PutVarint(bs, alen1); wlen >= 0 {
-		wire.Write(b[0:wlen])
-	}
-	for i := int64(0); i < alen1; i++ {
-		bs = b[:4]
-		tmp32 := t.Acks[i].Replica
-		bs[0] = byte(tmp32)
-		bs[1] = byte(tmp32 >> 8)
-		bs[2] = byte(tmp32 >> 16)
-		bs[3] = byte(tmp32 >> 24)
-		wire.Write(bs)
-		tmp32 = t.Acks[i].Ballot
-		bs[0] = byte(tmp32)
-		bs[1] = byte(tmp32 >> 8)
-		bs[2] = byte(tmp32 >> 16)
-		bs[3] = byte(tmp32 >> 24)
-		wire.Write(bs)
-		bs = b[:8]
-		tmp64 := t.Acks[i].CmdSlot
-		bs[0] = byte(tmp64)
-		bs[1] = byte(tmp64 >> 8)
-		bs[2] = byte(tmp64 >> 16)
-		bs[3] = byte(tmp64 >> 24)
-		bs[4] = byte(tmp64 >> 32)
-		bs[5] = byte(tmp64 >> 40)
-		bs[6] = byte(tmp64 >> 48)
-		bs[7] = byte(tmp64 >> 56)
-		wire.Write(bs)
-	}
-	bs = b[:]
-	alen2 := int64(len(t.Accepts))
-	if wlen := binary.PutVarint(bs, alen2); wlen >= 0 {
-		wire.Write(b[0:wlen])
-	}
-	for i := int64(0); i < alen2; i++ {
-		t.Accepts[i].Marshal(wire)
-	}
-}
-
-func (t *MAAcks) Unmarshal(rr io.Reader) error {
-	var wire byteReader
-	var ok bool
-	if wire, ok = rr.(byteReader); !ok {
-		wire = bufio.NewReader(rr)
-	}
-	var b [10]byte
-	var bs []byte
-	alen1, err := binary.ReadVarint(wire)
-	if err != nil {
-		return err
-	}
-	t.Acks = make([]MAcceptAck, alen1)
-	for i := int64(0); i < alen1; i++ {
-		bs = b[:4]
-		if _, err := io.ReadAtLeast(wire, bs, 4); err != nil {
-			return err
-		}
-		t.Acks[i].Replica = int32((uint32(bs[0]) | (uint32(bs[1]) << 8) | (uint32(bs[2]) << 16) | (uint32(bs[3]) << 24)))
-		if _, err := io.ReadAtLeast(wire, bs, 4); err != nil {
-			return err
-		}
-		t.Acks[i].Ballot = int32((uint32(bs[0]) | (uint32(bs[1]) << 8) | (uint32(bs[2]) << 16) | (uint32(bs[3]) << 24)))
-		bs = b[:8]
-		if _, err := io.ReadAtLeast(wire, bs, 8); err != nil {
-			return err
-		}
-		t.Acks[i].CmdSlot = int((uint64(bs[0]) | (uint64(bs[1]) << 8) | (uint64(bs[2]) << 16) | (uint64(bs[3]) << 24) | (uint64(bs[4]) << 32) | (uint64(bs[5]) << 40) | (uint64(bs[6]) << 48) | (uint64(bs[7]) << 56)))
-	}
-	alen2, err := binary.ReadVarint(wire)
-	if err != nil {
-		return err
-	}
-	t.Accepts = make([]MAccept, alen2)
-	for i := int64(0); i < alen2; i++ {
-		t.Accepts[i].Unmarshal(wire)
-	}
-	return nil
-}
-
-func (t *MReply) BinarySize() (nbytes int, sizeKnown bool) {
-	return 0, false
-}
-
-type MReplyCache struct {
-	mu    sync.Mutex
-	cache []*MReply
-}
-
-func NewMReplyCache() *MReplyCache {
-	c := &MReplyCache{}
-	c.cache = make([]*MReply, 0)
-	return c
-}
-
-func (p *MReplyCache) Get() *MReply {
-	var t *MReply
-	p.mu.Lock()
-	if len(p.cache) > 0 {
-		t = p.cache[len(p.cache)-1]
-		p.cache = p.cache[0:(len(p.cache) - 1)]
-	}
-	p.mu.Unlock()
-	if t == nil {
-		t = &MReply{}
-	}
-	return t
-}
-func (p *MReplyCache) Put(t *MReply) {
-	p.mu.Lock()
-	p.cache = append(p.cache, t)
-	p.mu.Unlock()
-}
-func (t *MReply) Marshal(wire io.Writer) {
-	var b [16]byte
-	var bs []byte
-	bs = b[:16]
-	tmp32 := t.Replica
-	bs[0] = byte(tmp32)
-	bs[1] = byte(tmp32 >> 8)
-	bs[2] = byte(tmp32 >> 16)
-	bs[3] = byte(tmp32 >> 24)
-	tmp32 = t.Ballot
-	bs[4] = byte(tmp32)
-	bs[5] = byte(tmp32 >> 8)
-	bs[6] = byte(tmp32 >> 16)
-	bs[7] = byte(tmp32 >> 24)
-	tmp32 = t.CmdId.ClientId
-	bs[8] = byte(tmp32)
-	bs[9] = byte(tmp32 >> 8)
-	bs[10] = byte(tmp32 >> 16)
-	bs[11] = byte(tmp32 >> 24)
-	tmp32 = t.CmdId.SeqNum
-	bs[12] = byte(tmp32)
-	bs[13] = byte(tmp32 >> 8)
-	bs[14] = byte(tmp32 >> 16)
-	bs[15] = byte(tmp32 >> 24)
-	wire.Write(bs)
-	bs = b[:]
-	alen1 := int64(len(t.Rep))
-	if wlen := binary.PutVarint(bs, alen1); wlen >= 0 {
-		wire.Write(b[0:wlen])
-	}
-	for i := int64(0); i < alen1; i++ {
-		bs = b[:1]
-		bs[0] = byte(t.Rep[i])
-		wire.Write(bs)
-	}
-}
-
-func (t *MReply) Unmarshal(rr io.Reader) error {
 	var wire byteReader
 	var ok bool
 	if wire, ok = rr.(byteReader); !ok {
@@ -660,6 +440,113 @@ func (t *MAccept) Unmarshal(wire io.Reader) error {
 	return nil
 }
 
+func (t *MReply) BinarySize() (nbytes int, sizeKnown bool) {
+	return 0, false
+}
+
+type MReplyCache struct {
+	mu    sync.Mutex
+	cache []*MReply
+}
+
+func NewMReplyCache() *MReplyCache {
+	c := &MReplyCache{}
+	c.cache = make([]*MReply, 0)
+	return c
+}
+
+func (p *MReplyCache) Get() *MReply {
+	var t *MReply
+	p.mu.Lock()
+	if len(p.cache) > 0 {
+		t = p.cache[len(p.cache)-1]
+		p.cache = p.cache[0:(len(p.cache) - 1)]
+	}
+	p.mu.Unlock()
+	if t == nil {
+		t = &MReply{}
+	}
+	return t
+}
+func (p *MReplyCache) Put(t *MReply) {
+	p.mu.Lock()
+	p.cache = append(p.cache, t)
+	p.mu.Unlock()
+}
+func (t *MReply) Marshal(wire io.Writer) {
+	var b [16]byte
+	var bs []byte
+	bs = b[:16]
+	tmp32 := t.Replica
+	bs[0] = byte(tmp32)
+	bs[1] = byte(tmp32 >> 8)
+	bs[2] = byte(tmp32 >> 16)
+	bs[3] = byte(tmp32 >> 24)
+	tmp32 = t.Ballot
+	bs[4] = byte(tmp32)
+	bs[5] = byte(tmp32 >> 8)
+	bs[6] = byte(tmp32 >> 16)
+	bs[7] = byte(tmp32 >> 24)
+	tmp32 = t.CmdId.ClientId
+	bs[8] = byte(tmp32)
+	bs[9] = byte(tmp32 >> 8)
+	bs[10] = byte(tmp32 >> 16)
+	bs[11] = byte(tmp32 >> 24)
+	tmp32 = t.CmdId.SeqNum
+	bs[12] = byte(tmp32)
+	bs[13] = byte(tmp32 >> 8)
+	bs[14] = byte(tmp32 >> 16)
+	bs[15] = byte(tmp32 >> 24)
+	wire.Write(bs)
+	bs = b[:]
+	alen1 := int64(len(t.Rep))
+	if wlen := binary.PutVarint(bs, alen1); wlen >= 0 {
+		wire.Write(b[0:wlen])
+	}
+	for i := int64(0); i < alen1; i++ {
+		bs = b[:1]
+		bs[0] = byte(t.Rep[i])
+		wire.Write(bs)
+	}
+	bs[0] = byte(t.Ok)
+	wire.Write(bs)
+}
+
+func (t *MReply) Unmarshal(rr io.Reader) error {
+	var wire byteReader
+	var ok bool
+	if wire, ok = rr.(byteReader); !ok {
+		wire = bufio.NewReader(rr)
+	}
+	var b [16]byte
+	var bs []byte
+	bs = b[:16]
+	if _, err := io.ReadAtLeast(wire, bs, 16); err != nil {
+		return err
+	}
+	t.Replica = int32((uint32(bs[0]) | (uint32(bs[1]) << 8) | (uint32(bs[2]) << 16) | (uint32(bs[3]) << 24)))
+	t.Ballot = int32((uint32(bs[4]) | (uint32(bs[5]) << 8) | (uint32(bs[6]) << 16) | (uint32(bs[7]) << 24)))
+	t.CmdId.ClientId = int32((uint32(bs[8]) | (uint32(bs[9]) << 8) | (uint32(bs[10]) << 16) | (uint32(bs[11]) << 24)))
+	t.CmdId.SeqNum = int32((uint32(bs[12]) | (uint32(bs[13]) << 8) | (uint32(bs[14]) << 16) | (uint32(bs[15]) << 24)))
+	alen1, err := binary.ReadVarint(wire)
+	if err != nil {
+		return err
+	}
+	t.Rep = make([]byte, alen1)
+	for i := int64(0); i < alen1; i++ {
+		bs = b[:1]
+		if _, err := io.ReadAtLeast(wire, bs, 1); err != nil {
+			return err
+		}
+		t.Rep[i] = byte(bs[0])
+	}
+	if _, err := io.ReadAtLeast(wire, bs, 1); err != nil {
+		return err
+	}
+	t.Ok = uint8(bs[0])
+	return nil
+}
+
 func (t *MAcceptAck) BinarySize() (nbytes int, sizeKnown bool) {
 	return 16, true
 }
@@ -732,23 +619,23 @@ func (t *MAcceptAck) Unmarshal(wire io.Reader) error {
 	return nil
 }
 
-func (t *MCommit) BinarySize() (nbytes int, sizeKnown bool) {
-	return 16, true
+func (t *MAAcks) BinarySize() (nbytes int, sizeKnown bool) {
+	return 0, false
 }
 
-type MCommitCache struct {
+type MAAcksCache struct {
 	mu    sync.Mutex
-	cache []*MCommit
+	cache []*MAAcks
 }
 
-func NewMCommitCache() *MCommitCache {
-	c := &MCommitCache{}
-	c.cache = make([]*MCommit, 0)
+func NewMAAcksCache() *MAAcksCache {
+	c := &MAAcksCache{}
+	c.cache = make([]*MAAcks, 0)
 	return c
 }
 
-func (p *MCommitCache) Get() *MCommit {
-	var t *MCommit
+func (p *MAAcksCache) Get() *MAAcks {
+	var t *MAAcks
 	p.mu.Lock()
 	if len(p.cache) > 0 {
 		t = p.cache[len(p.cache)-1]
@@ -756,19 +643,136 @@ func (p *MCommitCache) Get() *MCommit {
 	}
 	p.mu.Unlock()
 	if t == nil {
-		t = &MCommit{}
+		t = &MAAcks{}
 	}
 	return t
 }
-func (p *MCommitCache) Put(t *MCommit) {
+func (p *MAAcksCache) Put(t *MAAcks) {
 	p.mu.Lock()
 	p.cache = append(p.cache, t)
 	p.mu.Unlock()
 }
-func (t *MCommit) Marshal(wire io.Writer) {
-	var b [16]byte
+func (t *MAAcks) Marshal(wire io.Writer) {
+	var b [10]byte
 	var bs []byte
-	bs = b[:16]
+	bs = b[:]
+	alen1 := int64(len(t.Acks))
+	if wlen := binary.PutVarint(bs, alen1); wlen >= 0 {
+		wire.Write(b[0:wlen])
+	}
+	for i := int64(0); i < alen1; i++ {
+		bs = b[:4]
+		tmp32 := t.Acks[i].Replica
+		bs[0] = byte(tmp32)
+		bs[1] = byte(tmp32 >> 8)
+		bs[2] = byte(tmp32 >> 16)
+		bs[3] = byte(tmp32 >> 24)
+		wire.Write(bs)
+		tmp32 = t.Acks[i].Ballot
+		bs[0] = byte(tmp32)
+		bs[1] = byte(tmp32 >> 8)
+		bs[2] = byte(tmp32 >> 16)
+		bs[3] = byte(tmp32 >> 24)
+		wire.Write(bs)
+		bs = b[:8]
+		tmp64 := t.Acks[i].CmdSlot
+		bs[0] = byte(tmp64)
+		bs[1] = byte(tmp64 >> 8)
+		bs[2] = byte(tmp64 >> 16)
+		bs[3] = byte(tmp64 >> 24)
+		bs[4] = byte(tmp64 >> 32)
+		bs[5] = byte(tmp64 >> 40)
+		bs[6] = byte(tmp64 >> 48)
+		bs[7] = byte(tmp64 >> 56)
+		wire.Write(bs)
+	}
+	bs = b[:]
+	alen2 := int64(len(t.Accepts))
+	if wlen := binary.PutVarint(bs, alen2); wlen >= 0 {
+		wire.Write(b[0:wlen])
+	}
+	for i := int64(0); i < alen2; i++ {
+		t.Accepts[i].Marshal(wire)
+	}
+}
+
+func (t *MAAcks) Unmarshal(rr io.Reader) error {
+	var wire byteReader
+	var ok bool
+	if wire, ok = rr.(byteReader); !ok {
+		wire = bufio.NewReader(rr)
+	}
+	var b [10]byte
+	var bs []byte
+	alen1, err := binary.ReadVarint(wire)
+	if err != nil {
+		return err
+	}
+	t.Acks = make([]MAcceptAck, alen1)
+	for i := int64(0); i < alen1; i++ {
+		bs = b[:4]
+		if _, err := io.ReadAtLeast(wire, bs, 4); err != nil {
+			return err
+		}
+		t.Acks[i].Replica = int32((uint32(bs[0]) | (uint32(bs[1]) << 8) | (uint32(bs[2]) << 16) | (uint32(bs[3]) << 24)))
+		if _, err := io.ReadAtLeast(wire, bs, 4); err != nil {
+			return err
+		}
+		t.Acks[i].Ballot = int32((uint32(bs[0]) | (uint32(bs[1]) << 8) | (uint32(bs[2]) << 16) | (uint32(bs[3]) << 24)))
+		bs = b[:8]
+		if _, err := io.ReadAtLeast(wire, bs, 8); err != nil {
+			return err
+		}
+		t.Acks[i].CmdSlot = int((uint64(bs[0]) | (uint64(bs[1]) << 8) | (uint64(bs[2]) << 16) | (uint64(bs[3]) << 24) | (uint64(bs[4]) << 32) | (uint64(bs[5]) << 40) | (uint64(bs[6]) << 48) | (uint64(bs[7]) << 56)))
+	}
+	alen2, err := binary.ReadVarint(wire)
+	if err != nil {
+		return err
+	}
+	t.Accepts = make([]MAccept, alen2)
+	for i := int64(0); i < alen2; i++ {
+		t.Accepts[i].Unmarshal(wire)
+	}
+	return nil
+}
+
+func (t *MRecordAck) BinarySize() (nbytes int, sizeKnown bool) {
+	return 17, true
+}
+
+type MRecordAckCache struct {
+	mu    sync.Mutex
+	cache []*MRecordAck
+}
+
+func NewMRecordAckCache() *MRecordAckCache {
+	c := &MRecordAckCache{}
+	c.cache = make([]*MRecordAck, 0)
+	return c
+}
+
+func (p *MRecordAckCache) Get() *MRecordAck {
+	var t *MRecordAck
+	p.mu.Lock()
+	if len(p.cache) > 0 {
+		t = p.cache[len(p.cache)-1]
+		p.cache = p.cache[0:(len(p.cache) - 1)]
+	}
+	p.mu.Unlock()
+	if t == nil {
+		t = &MRecordAck{}
+	}
+	return t
+}
+func (p *MRecordAckCache) Put(t *MRecordAck) {
+	p.mu.Lock()
+	p.cache = append(p.cache, t)
+	p.mu.Unlock()
+}
+func (t *MRecordAck) Marshal(wire io.Writer) {
+	var b [17]byte
+	var bs []byte
+	bs = b[:17]
 	tmp32 := t.Replica
 	bs[0] = byte(tmp32)
 	bs[1] = byte(tmp32 >> 8)
@@ -779,28 +783,32 @@ func (t *MCommit) Marshal(wire io.Writer) {
 	bs[5] = byte(tmp32 >> 8)
 	bs[6] = byte(tmp32 >> 16)
 	bs[7] = byte(tmp32 >> 24)
-	tmp64 := t.CmdSlot
-	bs[8] = byte(tmp64)
-	bs[9] = byte(tmp64 >> 8)
-	bs[10] = byte(tmp64 >> 16)
-	bs[11] = byte(tmp64 >> 24)
-	bs[12] = byte(tmp64 >> 32)
-	bs[13] = byte(tmp64 >> 40)
-	bs[14] = byte(tmp64 >> 48)
-	bs[15] = byte(tmp64 >> 56)
+	tmp32 = t.CmdId.ClientId
+	bs[8] = byte(tmp32)
+	bs[9] = byte(tmp32 >> 8)
+	bs[10] = byte(tmp32 >> 16)
+	bs[11] = byte(tmp32 >> 24)
+	tmp32 = t.CmdId.SeqNum
+	bs[12] = byte(tmp32)
+	bs[13] = byte(tmp32 >> 8)
+	bs[14] = byte(tmp32 >> 16)
+	bs[15] = byte(tmp32 >> 24)
+	bs[16] = byte(t.Ok)
 	wire.Write(bs)
 }
 
-func (t *MCommit) Unmarshal(wire io.Reader) error {
-	var b [16]byte
+func (t *MRecordAck) Unmarshal(wire io.Reader) error {
+	var b [17]byte
 	var bs []byte
-	bs = b[:16]
-	if _, err := io.ReadAtLeast(wire, bs, 16); err != nil {
+	bs = b[:17]
+	if _, err := io.ReadAtLeast(wire, bs, 17); err != nil {
 		return err
 	}
 	t.Replica = int32((uint32(bs[0]) | (uint32(bs[1]) << 8) | (uint32(bs[2]) << 16) | (uint32(bs[3]) << 24)))
 	t.Ballot = int32((uint32(bs[4]) | (uint32(bs[5]) << 8) | (uint32(bs[6]) << 16) | (uint32(bs[7]) << 24)))
-	t.CmdSlot = int((uint64(bs[8]) | (uint64(bs[9]) << 8) | (uint64(bs[10]) << 16) | (uint64(bs[11]) << 24) | (uint64(bs[12]) << 32) | (uint64(bs[13]) << 40) | (uint64(bs[14]) << 48) | (uint64(bs[15]) << 56)))
+	t.CmdId.ClientId = int32((uint32(bs[8]) | (uint32(bs[9]) << 8) | (uint32(bs[10]) << 16) | (uint32(bs[11]) << 24)))
+	t.CmdId.SeqNum = int32((uint32(bs[12]) | (uint32(bs[13]) << 8) | (uint32(bs[14]) << 16) | (uint32(bs[15]) << 24)))
+	t.Ok = uint8(bs[16])
 	return nil
 }
 
