@@ -44,7 +44,7 @@ var (
 	durable     = flag.Bool("durable", false, "Log to a stable store")
 	batchWait   = flag.Int("batchwait", 0, "Milliseconds to wait before sending a batch")
 	tConf       = flag.Bool("tconf", true, "Conflict relation is transitive")
-	proxy       = flag.String("proxy", "", "File with the list of proxy IPs for this server")
+	proxy       = flag.String("proxy", "", "File with the list of clients IPs for this server")
 	qfile       = flag.String("qfile", "", "Quorum config file")
 	descNum     = flag.Int("desc", 100, "Number of command descriptors (only for Paxoi and n²Paxos)")
 	poolLevel   = flag.Int("pool", 1, "Level of pool usage from 0 to 2 (only for Paxoi and n²Paxos)")
