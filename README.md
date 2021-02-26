@@ -21,13 +21,13 @@ Installation
 Supported protocols
 -------------------
 
-|  Name   | Comments                                    |
-|---------|---------------------------------------------|
-| Paxos   | Sutra's version with some minor fixes.      |
-| N2Paxos | All-to-all variant of Paxos.                |
-| EPaxos  | Slightly [improved version][epaxos_fix] of Sutra's fork<br />in which read operations are excluded from dependencies<br />of other read requests performed on the same key. |
-| Paxoi   | -                                           |
-| CURP    | -                                           |
+|  Name                  | Comments                                    |
+|------------------------|---------------------------------------------|
+| [Paxos][paxos_src]     | Sutra's version with some minor fixes.      |
+| [N2Paxos][n2paxos_src] | All-to-all variant of Paxos.                |
+| [EPaxos][epaxos_src]   | Slightly [improved][epaxos_fix] version of Sutra's fork<br />in which read operations are excluded from dependencies<br />of other read requests performed on the same key. |
+| [Paxoi][paxoi_src]     | -                                           |
+| [CURP][curp_src]       | -                                           |
 
 Add new protocol
 ----------------
@@ -88,3 +88,8 @@ Once all servers are ready start a client:
 [otrack]: https://github.com/otrack/epaxos
 [epaxos]: https://github.com/efficient/epaxos
 [epaxos_fix]: https://github.com/vonaka/shreplic/commit/5e4dcb5736dd3c4d3e87aeb18f67c4371e3c429c
+[paxos_src]: https://github.com/vonaka/shreplic/tree/master/paxos
+[n2paxos_src]: https://github.com/vonaka/shreplic/tree/master/n2paxos
+[epaxos_src]: https://github.com/vonaka/shreplic/tree/master/epaxos
+[paxoi_src]: https://github.com/vonaka/shreplic/tree/master/paxoi
+[curp_src]: https://github.com/vonaka/shreplic/tree/master/curp
