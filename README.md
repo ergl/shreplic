@@ -25,7 +25,7 @@ Supported protocols
 |---------|---------------------------------------------|
 | Paxos   | Sutra's version with some minor fixes.      |
 | N2Paxos | All-to-all variant of Paxos.                |
-| Epaxos  | Sutra's version with no changes whatsoever. |
+| EPaxos  | Slightly [improved version][epaxos_fix] of Sutra's fork<br />in which read operations are excluded from dependencies<br />of other read requests performed on the same key. |
 | Paxoi   | -                                           |
 | CURP    | -                                           |
 
@@ -87,3 +87,4 @@ Once all servers are ready start a client:
 
 [otrack]: https://github.com/otrack/epaxos
 [epaxos]: https://github.com/efficient/epaxos
+[epaxos_fix]: https://github.com/vonaka/shreplic/commit/5e4dcb5736dd3c4d3e87aeb18f67c4371e3c429c
