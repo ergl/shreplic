@@ -49,7 +49,7 @@ func NewClient(maddr, collocated string, mport, reqNum, writes, psize, conflict 
 	// args must be of the form "-N <rep_num>"
 	f := flag.NewFlagSet("custom CURP arguments", flag.ExitOnError)
 	repNum := f.Int("N", -1, "Number of replicas")
-	_ = f.Int("pclients", 0, "Number of clients already running on other machines")
+	pclients := f.Int("pclients", -1, "Number of clients already running on other machines")
 
 	f.Parse(strings.Fields(args))
 	if *repNum == -1 {
@@ -87,14 +87,15 @@ func NewClient(maddr, collocated string, mport, reqNum, writes, psize, conflict 
 	}
 
 	c.ReadTable = true
-	// Do not generate new key for each new request for fair comparison
-	// TODO: convert this into the option
-	/*i := 0
-	c.GetClientKey = func() state.Key {
-		k := 100 + i + (reqNum * (c.num + *pclients))
-		i++
-		return state.Key(k)
-	}*/
+	// Do not generate new key for each new request for fair (?) comparison
+	if *pclients != -1 {
+		i := 0
+		c.GetClientKey = func() state.Key {
+			k := 100 + i + (reqNum * (c.num + *pclients))
+			i++
+			return state.Key(k)
+		}
+	}
 
 	first := true
 	c.WaitResponse = func() error {
