@@ -172,12 +172,11 @@ func (r *Replica) run() {
 		case propose := <-r.ProposeChan:
 			if r.isLeader {
 				dep := r.leaderUnsync(propose.Command, r.lastCmdSlot)
-				desc := r.getCmdDesc(r.lastCmdSlot, nil, dep)
+				desc := r.getCmdDescSeq(r.lastCmdSlot, propose, dep, true)
 				if desc == nil {
 					log.Fatal("Got propose for the delivered command:",
 						propose.ClientId, propose.CommandId)
 				}
-				r.handlePropose(propose, desc, r.lastCmdSlot, dep)
 				r.lastCmdSlot++
 			} else {
 				// TODO: save payload if `optimized == true`
@@ -495,6 +494,10 @@ func (r *Replica) deliver(desc *commandDesc, slot int) {
 }
 
 func (r *Replica) getCmdDesc(slot int, msg interface{}, dep int) *commandDesc {
+	return r.getCmdDescSeq(slot, msg, dep, false)
+}
+
+func (r *Replica) getCmdDescSeq(slot int, msg interface{}, dep int, seq bool) *commandDesc {
 	slotStr := strconv.Itoa(slot)
 	if r.delivered.Has(slotStr) {
 		return nil
@@ -510,6 +513,7 @@ func (r *Replica) getCmdDesc(slot int, msg interface{}, dep int) *commandDesc {
 			}
 
 			desc = r.newDesc()
+			desc.seq = seq || desc.seq
 			desc.cmdSlot = slot
 			if !desc.seq {
 				go r.handleDesc(desc, slot, dep)

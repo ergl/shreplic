@@ -93,7 +93,7 @@ type readDesc struct {
 	propose *smr.GPropose
 }
 
-func NewReplica(rid int, addrs []string, exec, fastRead, dr, optExec bool,
+func NewReplica(rid int, addrs []string, exec, fastRead, dr, optExec, AQreconf bool,
 	pl, f int, qfile string, ps map[string]struct{}) *Replica {
 	cmap.SHARD_COUNT = 32768
 
@@ -150,7 +150,9 @@ func NewReplica(rid int, addrs []string, exec, fastRead, dr, optExec bool,
 	r.cballot = r.ballot
 	r.AQ = r.qs.AQ(r.ballot)
 	r.gc = NewGc(r)
-	r.dl = NewDelayLog(r)
+	if AQreconf {
+		r.dl = NewDelayLog(r)
+	}
 
 	initCs(&r.cs, r.RPC)
 
@@ -198,12 +200,18 @@ func (r *Replica) run() {
 	}
 
 	go r.WaitForClientConnections()
-	r.sender.SendToAll(&r.dl.ping, r.cs.pingRPC)
 
 	var cmdId CommandId
+	var swapChan chan SwapValue
+
+	if r.dl != nil {
+		r.sender.SendToAll(&r.dl.ping, r.cs.pingRPC)
+		swapChan = r.dl.swap
+	}
+
 	for !r.Shutdown {
 		select {
-		case swap := <-r.dl.swap:
+		case swap := <-swapChan:
 			if r.leader() != r.Id {
 				continue
 			}
@@ -266,17 +274,9 @@ func (r *Replica) run() {
 					}
 					return r.getDepAndUpdateInfo(propose.Command, cmdId)
 				}()
-				if r.leader() == r.Id {
-					desc := r.getCmdDesc(cmdId, nil, dep)
-					if desc == nil {
-						log.Fatal("Got propose for the delivered command ", cmdId)
-					}
-					r.handlePropose(propose, desc, cmdId)
-				} else {
-					desc := r.getCmdDesc(cmdId, propose, dep)
-					if desc == nil {
-						log.Fatal("Got propose for the delivered command ", cmdId)
-					}
+				desc := r.getCmdDescSeq(cmdId, propose, dep, r.leader() == r.Id)
+				if desc == nil {
+					log.Fatal("Got propose for the delivered command ", cmdId)
 				}
 			}
 
@@ -547,7 +547,7 @@ func (r *Replica) handlePing(msg *MPing) {
 }
 
 func (r *Replica) handlePingRep(msg *MPingRep) {
-	if r.ballot == msg.Ballot {
+	if r.ballot == msg.Ballot && r.dl != nil {
 		r.dl.BTick(msg.Ballot, msg.Replica, r.AQ.Contains(msg.Replica))
 		go func() {
 			time.Sleep(PING_DELAY)
@@ -642,6 +642,10 @@ func (r *Replica) deliverReadDesc(rDesc *readDesc, cmdId CommandId) {
 }
 
 func (r *Replica) getCmdDesc(cmdId CommandId, msg interface{}, dep Dep) *commandDesc {
+	return r.getCmdDescSeq(cmdId, msg, dep, false)
+}
+
+func (r *Replica) getCmdDescSeq(cmdId CommandId, msg interface{}, dep Dep, seq bool) *commandDesc {
 	key := cmdId.String()
 	if r.delivered.Has(key) {
 		return nil
@@ -663,6 +667,7 @@ func (r *Replica) getCmdDesc(cmdId CommandId, msg interface{}, dep Dep) *command
 			}
 
 			desc = r.newDesc()
+			desc.seq = seq || desc.seq
 			if !desc.seq {
 				go r.handleDesc(desc, cmdId)
 				r.routineCount++

@@ -48,6 +48,7 @@ var (
 	qfile       = flag.String("qfile", "", "Quorum config file")
 	descNum     = flag.Int("desc", 100, "Number of command descriptors (only for Paxoi and n²Paxos)")
 	poolLevel   = flag.Int("pool", 1, "Level of pool usage from 0 to 2 (only for Paxoi and n²Paxos)")
+	AQreconf    = flag.Bool("AQreconf", true, "Automatically reconfigure Paxoi's slow active quorum")
 	args        = flag.String("args", "", "Custom arguments")
 
 	//user flags
@@ -99,7 +100,7 @@ func main() {
 		log.Println("Starting Paxoi replica...")
 		paxoi.MaxDescRoutines = *descNum
 		rep := paxoi.NewReplica(replicaId, nodeList, *exec, *lread,
-			*dreply, *optExec, *poolLevel, *maxfailures, *qfile, ps)
+			*dreply, *optExec, *AQreconf, *poolLevel, *maxfailures, *qfile, ps)
 		rpc.Register(rep)
 	} else if *doN2paxos {
 		log.Println("Starting n²Paxos replica...")

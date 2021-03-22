@@ -46,6 +46,10 @@ func NewDelayLog(r *Replica) *DelayLog {
 }
 
 func (dl *DelayLog) Reinit(r *Replica) {
+	if dl == nil {
+		return
+	}
+
 	dl.swap = make(chan SwapValue, 2)
 	dl.ballot = r.ballot
 	dl.fastestSlowId = -1
@@ -54,6 +58,10 @@ func (dl *DelayLog) Reinit(r *Replica) {
 }
 
 func (dl *DelayLog) Tick(id int32, fast bool) int32 {
+	if dl == nil {
+		return -1
+	}
+
 	i := int32(id)
 
 	if dl.log[i].badCount == -1 {
@@ -87,7 +95,7 @@ func (dl *DelayLog) Tick(id int32, fast bool) int32 {
 }
 
 func (dl *DelayLog) BTick(ballot, id int32, fast bool) {
-	if dl.id == id || dl.ballot != ballot {
+	if dl == nil || dl.id == id || dl.ballot != ballot {
 		return
 	}
 	nid := dl.Tick(id, fast)
