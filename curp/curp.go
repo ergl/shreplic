@@ -269,7 +269,7 @@ func (r *Replica) handlePropose(msg *smr.GPropose, desc *commandDesc, slot int, 
 	}
 
 	r.deliver(desc, slot)
-	r.batcher.SendAccept(acc)
+	r.sender.SendToAll(acc, r.cs.acceptRPC)
 	r.handleAccept(acc, desc)
 }
 
@@ -293,11 +293,8 @@ func (r *Replica) handleAccept(msg *MAccept, desc *commandDesc) {
 	if r.isLeader {
 		r.handleAcceptAck(ack, desc)
 	} else {
-		if r.optimized {
-			prop, exists := r.proposes.Get(desc.cmdId.String())
-			if !exists {
-				return
-			}
+		prop, exists := r.proposes.Get(desc.cmdId.String())
+		if r.optimized && exists {
 			propose := prop.(*smr.GPropose)
 			recAck := &MRecordAck{
 				Replica: r.Id,
@@ -419,9 +416,6 @@ func (r *Replica) ok(cmd state.Command) uint8 {
 func (r *Replica) deliver(desc *commandDesc, slot int) {
 	desc.afterPayload.Call(func() {
 		slotStr := strconv.Itoa(slot)
-		if !r.isLeader {
-			r.sync(desc.cmdId, desc.cmd)
-		}
 
 		if r.delivered.Has(slotStr) || !r.Exec {
 			return
@@ -429,6 +423,10 @@ func (r *Replica) deliver(desc *commandDesc, slot int) {
 
 		if desc.phase != COMMIT && !r.isLeader {
 			return
+		}
+
+		if !r.isLeader {
+			r.sync(desc.cmdId, desc.cmd)
 		}
 
 		if slot > 0 && !r.executed.Has(strconv.Itoa(slot-1)) {

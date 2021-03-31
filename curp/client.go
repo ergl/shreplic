@@ -191,6 +191,10 @@ func (c *Client) handleReply(r *MReply) {
 }
 
 func (c *Client) handleRecordAck(r *MRecordAck, fromLeader bool) {
+	if _, exists := c.delivered[r.CmdId.SeqNum]; exists {
+		return
+	}
+
 	if c.ballot == -1 {
 		c.ballot = r.Ballot
 	} else if c.ballot < r.Ballot {
