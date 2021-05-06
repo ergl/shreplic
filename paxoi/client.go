@@ -76,7 +76,7 @@ func (c *Client) reinitFastAndSlowAcks() {
 		}
 		leaderFastAck := leaderMsg.(*MFastAck)
 		fastAck := msg.(*MFastAck)
-		return fastAck.Dep == nil || (Dep(leaderFastAck.Dep)).Equals(fastAck.Dep)
+		return fastAck.Checksum == nil || SHashesEq(leaderFastAck.Checksum, fastAck.Checksum)
 	}
 
 	free := func(msg interface{}) {
@@ -144,13 +144,15 @@ func (c *Client) handleMsgs() {
 				fastAck.Ballot = optAcks.Ballot
 				fastAck.CmdId = ack.CmdId
 				if !IsNilDepOfCmdId(ack.CmdId, ack.Dep) {
-					fastAck.Dep = ack.Dep
+					fastAck.Checksum = ack.Checksum
+					//fastAck.Dep = ack.Dep
 				} else {
 					if _, exists := c.alreadySlow[fastAck.CmdId]; !c.Reading && !exists {
 						c.slowPaths++
 						c.alreadySlow[fastAck.CmdId] = struct{}{}
 					}
-					fastAck.Dep = nil
+					fastAck.Checksum = nil
+					//fastAck.Dep = nil
 				}
 				c.handleFastAck(fastAck, false)
 			}
@@ -187,7 +189,8 @@ func (c *Client) handleLightSlowAck(ls *MLightSlowAck) {
 	f.Replica = ls.Replica
 	f.Ballot = ls.Ballot
 	f.CmdId = ls.CmdId
-	f.Dep = nil
+	f.Checksum = nil
+	//f.Dep = nil
 	c.handleFastAck(f, false)
 }
 
@@ -217,7 +220,8 @@ func (c *Client) handleReply(r *MReply) {
 	f.Replica = r.Replica
 	f.Ballot = r.Ballot
 	f.CmdId = r.CmdId
-	f.Dep = r.Dep
+	f.Checksum = r.Checksum
+	//f.Dep = r.Dep
 	c.val = r.Rep
 	c.handleFastAck(f, true)
 }
@@ -230,7 +234,8 @@ func (c *Client) handleReadReply(r *MReadReply) {
 	f.Replica = r.Replica
 	f.Ballot = r.Ballot
 	f.CmdId = r.CmdId
-	f.Dep = nil
+	f.Checksum = nil
+	//f.Dep = nil
 	c.val = r.Rep
 	c.handleFastAck(f, true) // <-- this `true` is not a bug
 }

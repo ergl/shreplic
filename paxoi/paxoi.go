@@ -29,6 +29,7 @@ type Replica struct {
 	repchan *replyChan
 
 	keys         map[state.Key]keyInfo
+	sums         map[state.Key]*checksum
 	reads        map[CommandId]*readDesc
 	history      []commandStaticDesc
 	historySize  int
@@ -60,6 +61,7 @@ type commandDesc struct {
 	phase      int
 	cmd        state.Command
 	dep        Dep
+	hs         []SHash
 	propose    *smr.GPropose
 	proposeDep Dep
 
@@ -108,6 +110,7 @@ func NewReplica(rid int, addrs []string, exec, fastRead, dr, optExec, AQreconf b
 		delivered: cmap.New(),
 
 		keys:         make(map[state.Key]keyInfo),
+		sums:         make(map[state.Key]*checksum),
 		reads:        make(map[CommandId]*readDesc),
 		history:      make([]commandStaticDesc, HISTORY_SIZE),
 		historySize:  0,
@@ -268,13 +271,13 @@ func (r *Replica) run() {
 			if r.fastRead && propose.Command.Op == state.GET {
 				r.handleRead(cmdId, propose)
 			} else {
-				dep := func() Dep {
+				dep, hs := func() (Dep, []SHash) {
 					if !r.AQ.Contains(r.Id) {
-						return nil
+						return nil, nil
 					}
-					return r.getDepAndUpdateInfo(propose.Command, cmdId)
+					return r.getDepAndHashes(propose.Command, cmdId)
 				}()
-				desc := r.getCmdDescSeq(cmdId, propose, dep, r.leader() == r.Id)
+				desc := r.getCmdDescSeq(cmdId, propose, dep, hs, r.leader() == r.Id)
 				if desc == nil {
 					log.Fatal("Got propose for the delivered command ", cmdId)
 				}
@@ -642,10 +645,10 @@ func (r *Replica) deliverReadDesc(rDesc *readDesc, cmdId CommandId) {
 }
 
 func (r *Replica) getCmdDesc(cmdId CommandId, msg interface{}, dep Dep) *commandDesc {
-	return r.getCmdDescSeq(cmdId, msg, dep, false)
+	return r.getCmdDescSeq(cmdId, msg, dep, nil, false)
 }
 
-func (r *Replica) getCmdDescSeq(cmdId CommandId, msg interface{}, dep Dep, seq bool) *commandDesc {
+func (r *Replica) getCmdDescSeq(cmdId CommandId, msg interface{}, dep Dep, hs []SHash, seq bool) *commandDesc {
 	key := cmdId.String()
 	if r.delivered.Has(key) {
 		return nil
@@ -658,6 +661,9 @@ func (r *Replica) getCmdDescSeq(cmdId CommandId, msg interface{}, dep Dep, seq b
 			defer func() {
 				if dep != nil && desc.proposeDep == nil {
 					desc.proposeDep = dep
+					if hs != nil {
+						desc.hs = hs
+					}
 				}
 			}()
 
@@ -690,6 +696,7 @@ func (r *Replica) getCmdDescSeq(cmdId CommandId, msg interface{}, dep Dep, seq b
 func (r *Replica) newDesc() *commandDesc {
 	desc := r.allocDesc()
 	desc.dep = nil
+	desc.hs = nil
 	if desc.msgs == nil {
 		desc.msgs = make(chan interface{}, 8)
 	} else {
@@ -840,24 +847,13 @@ func (r *Replica) getDep(cmd state.Command) Dep {
 	return dep
 }
 
-func (r *Replica) updateInfo(cmd state.Command, cmdId CommandId) {
-	for _, key := range keysOf(cmd) {
-		info, exists := r.keys[key]
-		if !exists {
-			info = newLightKeyInfo()
-			r.keys[key] = info
-		}
-		info.add(cmd, cmdId)
-	}
-}
-
-func (r *Replica) getDepAndUpdateInfo(cmd state.Command, cmdId CommandId) Dep {
+func (r *Replica) getDepAndHashes(cmd state.Command, cmdId CommandId) (Dep, []SHash) {
 	dep := []CommandId{}
+	hashes := []SHash{}
 	keysOfCmd := keysOf(cmd)
 
 	for _, key := range keysOfCmd {
 		info, exists := r.keys[key]
-
 		if exists {
 			cdep := info.getConflictCmds(cmd)
 			dep = append(dep, cdep...)
@@ -865,9 +861,15 @@ func (r *Replica) getDepAndUpdateInfo(cmd state.Command, cmdId CommandId) Dep {
 			info = newLightKeyInfo()
 			r.keys[key] = info
 		}
-
 		info.add(cmd, cmdId)
+
+		s, exists := r.sums[key]
+		if !exists {
+			s = newChecksum()
+			r.sums[key] = s
+		}
+		hashes = append(hashes, s.update(cmd, cmdId))
 	}
 
-	return dep
+	return dep, hashes
 }

@@ -1,6 +1,8 @@
 package paxoi
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"time"
@@ -32,6 +34,31 @@ var MaxDescRoutines = 100
 type CommandId struct {
 	ClientId int32
 	SeqNum   int32
+}
+
+type SHash struct {
+	H [32]byte
+}
+
+func SHashesEq(hs1 []SHash, hs2 []SHash) bool {
+	if len(hs1) != len(hs2) {
+		return false
+	}
+
+	for _, h := range hs1 {
+		eq := false
+		for _, g := range hs2 {
+			if bytes.Equal(h.H[:], g.H[:]) {
+				eq = true
+				break
+			}
+		}
+		if !eq {
+			return false
+		}
+	}
+
+	return true
 }
 
 func (cmdId CommandId) String() string {
@@ -323,4 +350,50 @@ func (ki *lightKeyInfo) getConflictCmds(cmd state.Command) []CommandId {
 	} else {
 		return ki.lastCmd
 	}
+}
+
+type checksum struct {
+	cmd   [32]byte
+	write [32]byte
+}
+
+func newChecksum() *checksum {
+	return &checksum{
+		[32]byte{},
+		[32]byte{},
+	}
+}
+
+func (s *checksum) update(cmd state.Command, cmdId CommandId) SHash {
+	var h [32]byte
+
+	if cmd.Op == state.PUT {
+		h = s.cmd
+	} else {
+		h = s.write
+	}
+
+	bs := make([]byte, 40)
+	for i, b := range h {
+		bs[i] = b
+	}
+
+	tmp32 := cmdId.ClientId
+	bs[32] = byte(tmp32)
+	bs[33] = byte(tmp32 >> 8)
+	bs[34] = byte(tmp32 >> 16)
+	bs[35] = byte(tmp32 >> 24)
+	tmp32 = cmdId.SeqNum
+	bs[36] = byte(tmp32)
+	bs[37] = byte(tmp32 >> 8)
+	bs[38] = byte(tmp32 >> 16)
+	bs[39] = byte(tmp32 >> 24)
+
+	h = sha256.Sum256(bs)
+	s.cmd = h
+	if cmd.Op == state.PUT {
+		s.write = h
+	}
+
+	return SHash{h}
 }

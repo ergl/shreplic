@@ -303,7 +303,7 @@ func (r *Replica) handleSync(msg *MSync) {
 					Replica: r.Id,
 					Ballot:  r.ballot,
 					CmdId:   cmdId,
-					Dep:     msg.Deps[cmdId],
+					//Dep:     msg.Deps[cmdId],
 				}
 				r.sender.SendToClient(propose.ClientId, reply, r.cs.replyRPC)
 			} else {

@@ -7,6 +7,7 @@ import (
 
 type replyArgs struct {
 	dep     Dep
+	hs      []SHash
 	val     state.Value
 	cmdId   CommandId
 	finish  chan interface{}
@@ -49,7 +50,8 @@ func NewReplyChan(r *Replica) *replyChan {
 						Replica: r.Id,
 						Ballot:  r.ballot,
 						CmdId:   args.cmdId,
-						Dep:     args.dep,
+						Checksum: args.hs,
+						//Dep:     args.dep,
 						Rep:     args.val,
 					}
 					r.sender.SendToClient(args.propose.ClientId, reply, r.cs.replyRPC)
@@ -81,8 +83,13 @@ func (r *replyChan) stop() {
 func (r *replyChan) reply(desc *commandDesc, cmdId CommandId, val state.Value) {
 	dep := make([]CommandId, len(desc.dep))
 	copy(dep, desc.dep)
+
+	hs := make([]SHash, len(desc.dep))
+	copy(hs, desc.hs)
+
 	r.args <- &replyArgs{
 		dep:     dep,
+		hs:      hs,
 		val:     val,
 		cmdId:   cmdId,
 		finish:  desc.msgs,

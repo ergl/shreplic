@@ -38,8 +38,9 @@ func NewBatcher(r *Replica, size int,
 					Replica: r.Id,
 					Ballot:  fastAck.Ballot,
 					Acks: []Ack{Ack{
-						CmdId: fastAck.CmdId,
-						Dep:   fastAck.Dep,
+						CmdId:    fastAck.CmdId,
+						Dep:      fastAck.Dep,
+						Checksum: fastAck.Checksum,
 					}},
 				}
 				is := map[CommandId]int{fastAck.CmdId: 0}
@@ -60,8 +61,9 @@ func NewBatcher(r *Replica, size int,
 					if ballot == f.Ballot {
 						is[f.CmdId] = len(optAcks.Acks)
 						optAcks.Acks = append(optAcks.Acks, Ack{
-							CmdId: f.CmdId,
-							Dep:   f.Dep,
+							CmdId:    f.CmdId,
+							Dep:      f.Dep,
+							Checksum: f.Checksum,
 						})
 					} else {
 						ballot = -1
@@ -84,8 +86,9 @@ func NewBatcher(r *Replica, size int,
 						} else {
 							is[s.CmdId] = len(optAcks.Acks)
 							optAcks.Acks = append(optAcks.Acks, Ack{
-								CmdId: s.CmdId,
-								Dep:   NilDepOfCmdId(s.CmdId),
+								CmdId:    s.CmdId,
+								Dep:      NilDepOfCmdId(s.CmdId),
+								Checksum: []SHash{},
 							})
 						}
 					} else {
@@ -139,8 +142,9 @@ func NewBatcher(r *Replica, size int,
 					Replica: r.Id,
 					Ballot:  slowAck.Ballot,
 					Acks: []Ack{Ack{
-						CmdId: slowAck.CmdId,
-						Dep:   NilDepOfCmdId(slowAck.CmdId),
+						CmdId:    slowAck.CmdId,
+						Dep:      NilDepOfCmdId(slowAck.CmdId),
+						Checksum: []SHash{},
 					}},
 				}
 				is := map[CommandId]int{slowAck.CmdId: 0}
@@ -161,8 +165,9 @@ func NewBatcher(r *Replica, size int,
 					if ballot == s.Ballot {
 						is[s.CmdId] = len(optAcks.Acks)
 						optAcks.Acks = append(optAcks.Acks, Ack{
-							CmdId: s.CmdId,
-							Dep:   NilDepOfCmdId(s.CmdId),
+							CmdId:    s.CmdId,
+							Dep:      NilDepOfCmdId(s.CmdId),
+							Checksum: []SHash{},
 						})
 					} else {
 						ballot = -1
@@ -183,8 +188,9 @@ func NewBatcher(r *Replica, size int,
 						if !exists {
 							is[f.CmdId] = len(optAcks.Acks)
 							optAcks.Acks = append(optAcks.Acks, Ack{
-								CmdId: f.CmdId,
-								Dep:   f.Dep,
+								CmdId:    f.CmdId,
+								Dep:      f.Dep,
+								Checksum: f.Checksum,
 							})
 						}
 					} else {
