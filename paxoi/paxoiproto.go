@@ -149,6 +149,7 @@ func copyFastAck(fa *MFastAck) *MFastAck {
 	fa2.Ballot = fa.Ballot
 	fa2.CmdId = fa.CmdId
 	fa2.Dep = fa.Dep
+	fa2.Checksum = fa.Checksum
 	return fa2
 }
 

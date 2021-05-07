@@ -21,7 +21,7 @@ const (
 // phase
 const (
 	START = iota
-	PAYLOAD_ONLY
+	//PAYLOAD_ONLY
 	PRE_ACCEPT
 	ACCEPT
 	COMMIT

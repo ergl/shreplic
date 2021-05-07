@@ -58,7 +58,7 @@ func NewReplyChan(r *Replica) *replyChan {
 				}
 				r.historySize = (r.historySize % HISTORY_SIZE) + 1
 				args.finish <- (r.historySize - 1)
-				r.gc.Prepare(r, args.cmdId)
+				//r.gc.Prepare(r, args.cmdId)
 
 			case args := <-rc.readArgs:
 				reply := &MReadReply{
@@ -84,7 +84,7 @@ func (r *replyChan) reply(desc *commandDesc, cmdId CommandId, val state.Value) {
 	dep := make([]CommandId, len(desc.dep))
 	copy(dep, desc.dep)
 
-	hs := make([]SHash, len(desc.dep))
+	hs := make([]SHash, len(desc.hs))
 	copy(hs, desc.hs)
 
 	r.args <- &replyArgs{
