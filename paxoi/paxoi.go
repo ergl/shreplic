@@ -56,7 +56,7 @@ type Replica struct {
 	//newLeaderAcks *smr.MsgSet
 
 	// TODO: get rid of this
-	proposes map[CommandId]*smr.GPropose
+	//proposes map[CommandId]*smr.GPropose
 }
 
 type commandDesc struct {
@@ -136,7 +136,7 @@ func NewReplica(rid int, addrs []string, exec, fastRead, dr, optExec, AQreconf b
 			},
 		},
 
-		proposes: make(map[CommandId]*smr.GPropose),
+		//proposes: make(map[CommandId]*smr.GPropose),
 	}
 
 	useFastAckPool = pl > 1
@@ -274,7 +274,7 @@ func (r *Replica) run() {
 		case propose := <-r.ProposeChan:
 			cmdId.ClientId = propose.ClientId
 			cmdId.SeqNum = propose.CommandId
-			r.proposes[cmdId] = propose
+			//r.proposes[cmdId] = propose
 			if r.fastRead && propose.Command.Op == state.GET {
 				r.handleRead(cmdId, propose)
 			} else {
@@ -319,6 +319,7 @@ func (r *Replica) run() {
 				fastAck.Replica = optAcks.Replica
 				fastAck.Ballot = optAcks.Ballot
 				fastAck.CmdId = ack.CmdId
+				fastAck.Checksum = ack.Checksum
 				if !IsNilDepOfCmdId(ack.CmdId, ack.Dep) {
 					fastAck.Dep = ack.Dep
 				} else {
@@ -460,8 +461,23 @@ func (r *Replica) fastAckFromLeader(msg *MFastAck, desc *commandDesc) {
 		desc.phase = ACCEPT
 		msgCmdId := msg.CmdId
 		dep := Dep(msg.Dep)
+		hs := desc.hs
+		eq := desc.dep.Equals(dep)
+
+		defer func() {
+			if eq && r.optExec && !SHashesEq(hs, msg.Checksum) {
+				lightSlowAck := &MLightSlowAck{
+					Replica: r.Id,
+					Ballot:  r.ballot,
+					CmdId:   msgCmdId,
+				}
+				//fmt.Println("sending slowAck", r.Id, msgCmdId, msg.Checksum, hs)
+				r.sender.SendToClient(msgCmdId.ClientId, lightSlowAck, r.cs.lightSlowAckRPC)
+			}
+		}()
+
 		desc.slowPathH.Add(msg.Replica, true, msg)
-		desc.fastPathH.Add(msg.Replica, true, msg)
+		//desc.fastPathH.Add(msg.Replica, true, msg)
 		//desc.fastAndSlowAcks.Add(msg.Replica, true, msg)
 		if r.delivered.Has(msgCmdId.String()) {
 			// since at this point msg can be already deallocated,
@@ -469,10 +485,16 @@ func (r *Replica) fastAckFromLeader(msg *MFastAck, desc *commandDesc) {
 			// all this can happen if desc.seq == true
 			return
 		}
+		desc.fastPathH.Add(msg.Replica, true, msg)
+		if r.delivered.Has(msgCmdId.String()) {
+			return
+		}
 		//equals, diffs := desc.dep.EqualsAndDiff(dep)
 
+		//fmt.Println("got slowAck", r.Id, msgCmdId, msg.Checksum, desc.hs)
+
 		//if !equals {
-		if !desc.dep.Equals(dep) {
+		if !eq {
 			// oldDefered := desc.defered
 			// desc.defered = func() {
 			// 	for cmdId := range diffs {
@@ -499,10 +521,19 @@ func (r *Replica) fastAckFromLeader(msg *MFastAck, desc *commandDesc) {
 			if !r.optExec {
 				r.batcher.SendLightSlowAck(lightSlowAck)
 			} else {
+				//fmt.Println("sending slowAck (2)", r.Id, msgCmdId, msg.Checksum, desc.hs)
 				r.batcher.SendLightSlowAckClient(lightSlowAck, desc.propose.ClientId)
 			}
 			r.handleLightSlowAck(lightSlowAck, desc)
-		}
+		}//  else if r.optExec && !SHashesEq(desc.hs, msg.Checksum) {
+		// 	lightSlowAck := &MLightSlowAck{
+		// 		Replica: r.Id,
+		// 		Ballot:  r.ballot,
+		// 		CmdId:   msgCmdId,
+		// 	}
+		// 	fmt.Println("sending slowAck", r.Id, msgCmdId, msg.Checksum, desc.hs)
+		// 	r.sender.SendToClient(msgCmdId.ClientId, lightSlowAck, r.cs.lightSlowAckRPC)
+		// }
 	})
 }
 
@@ -511,8 +542,12 @@ func (r *Replica) commonCaseFastAck(msg *MFastAck, desc *commandDesc) {
 		return
 	}
 
+	msgCmdId := msg.CmdId
 	if msg.Dep == nil {
 		desc.slowPathH.Add(msg.Replica, msg.Replica == r.leader(), msg)
+		if r.delivered.Has(msgCmdId.String()) {
+			return
+		}
 	}
 	desc.fastPathH.Add(msg.Replica, msg.Replica == r.leader(), msg)
 	//desc.fastAndSlowAcks.Add(msg.Replica, msg.Replica == r.leader(), msg)
@@ -758,8 +793,9 @@ func (r *Replica) newDesc() *commandDesc {
 		}
 	}
 
-	desc.slowPathH = desc.slowPathH.ReinitMsgSet(r.SQ, acceptFastAndSlowAck, freeFastAck, getFastAndSlowAcksHandler(r, desc))
-	desc.fastPathH = desc.fastPathH.ReinitMsgSet(r.FQ, acceptFastAndSlowAck, freeFastAck, getFastAndSlowAcksHandler(r, desc))
+	h := getFastAndSlowAcksHandler(r, desc)
+	desc.slowPathH = desc.slowPathH.ReinitMsgSet(r.SQ, acceptFastAndSlowAck, freeFastAck, h)
+	desc.fastPathH = desc.fastPathH.ReinitMsgSet(r.FQ, acceptFastAndSlowAck, freeFastAck, h)
 
 	// desc.fastAndSlowAcks = desc.fastAndSlowAcks.ReinitMsgSet(r.AQ,
 	// 	acceptFastAndSlowAck, freeFastAck,

@@ -83,6 +83,7 @@ func NewBatcher(r *Replica, size int,
 						iCmdId, exists := is[s.CmdId]
 						if exists {
 							optAcks.Acks[iCmdId].Dep = NilDepOfCmdId(s.CmdId)
+							optAcks.Acks[iCmdId].Checksum = []SHash{}
 						} else {
 							is[s.CmdId] = len(optAcks.Acks)
 							optAcks.Acks = append(optAcks.Acks, Ack{

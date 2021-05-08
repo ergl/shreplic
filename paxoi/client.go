@@ -140,7 +140,9 @@ func (c *Client) handleMsgs() {
 					}
 					fastAck.Checksum = nil
 				}
-				if c.handleFastAck(fastAck, false) && fastAck.Checksum == nil {
+				c.handleFastAck(fastAck, false)
+				if _, exists := c.delivered[fastAck.CmdId]; !exists && fastAck.Checksum == nil {
+					//c.Println("wanna add", fastAck.Replica, fastAck.CmdId, false)
 					c.slowPathH.Add(fastAck.Replica, false, fastAck)
 				}
 			}
@@ -181,9 +183,14 @@ func (c *Client) handleLightSlowAck(ls *MLightSlowAck) {
 	f.Ballot = ls.Ballot
 	f.CmdId = ls.CmdId
 	f.Checksum = nil
-	if c.handleFastAck(f, false) {
+	c.handleFastAck(f, false)
+	if _, exists := c.delivered[f.CmdId]; !exists {
+		//c.Println("wanna add", f.Replica, f.CmdId, false)
 		c.slowPathH.Add(f.Replica, false, f)
 	}
+	// if c.handleFastAck(f, false) {
+	// 	c.slowPathH.Add(f.Replica, false, f)
+	// }
 }
 
 func (c *Client) handleFastAndSlowAcks(leaderMsg interface{}, msgs []interface{}) {
@@ -215,6 +222,13 @@ func (c *Client) handleReply(r *MReply) {
 	f.Checksum = r.Checksum
 	c.val = r.Rep
 	c.handleFastAck(f, true)
+	if _, exists := c.delivered[f.CmdId]; !exists {
+		//c.Println("wanna add", f.Replica, f.CmdId, true)
+		c.slowPathH.Add(f.Replica, true, f)
+	}
+	// if c.handleFastAck(f, true) {
+	// 	c.slowPathH.Add(f.Replica, true, f)
+	// }
 }
 
 // func (c *Client) handleReadReply(r *MReadReply) {
