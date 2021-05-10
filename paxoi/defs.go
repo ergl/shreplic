@@ -353,18 +353,29 @@ func (ki *lightKeyInfo) getConflictCmds(cmd state.Command) []CommandId {
 }
 
 type checksum struct {
-	cmd   [32]byte
-	write [32]byte
+	cmd         [32]byte
+	write       [32]byte
+	lastUpdate  CommandId
+	writeUpdate bool
 }
 
 func newChecksum() *checksum {
 	return &checksum{
-		[32]byte{},
-		[32]byte{},
+		cmd:   [32]byte{},
+		write: [32]byte{},
 	}
 }
 
-func (s *checksum) update(cmd state.Command, cmdId CommandId) SHash {
+func (s *checksum) correct(cmdId CommandId, newHash SHash) {
+	if s.lastUpdate == cmdId {
+		s.cmd = newHash.H
+		if s.writeUpdate {
+			s.write = newHash.H
+		}
+	}
+}
+
+func (s *checksum) hash(cmd state.Command, cmdId CommandId) [32]byte {
 	var h [32]byte
 
 	if cmd.Op == state.PUT {
@@ -389,11 +400,15 @@ func (s *checksum) update(cmd state.Command, cmdId CommandId) SHash {
 	bs[38] = byte(tmp32 >> 16)
 	bs[39] = byte(tmp32 >> 24)
 
-	h = sha256.Sum256(bs)
+	return sha256.Sum256(bs)
+}
+
+func (s *checksum) update(cmd state.Command, cmdId CommandId) SHash {
+	h := s.hash(cmd, cmdId)
 	s.cmd = h
-	if cmd.Op == state.PUT {
+	if s.writeUpdate = (cmd.Op == state.PUT); s.writeUpdate {
 		s.write = h
 	}
-
+	s.lastUpdate = cmdId
 	return SHash{h}
 }

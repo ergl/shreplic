@@ -35,6 +35,8 @@ type Replica struct {
 	historySize  int
 	historyStart int
 
+	checksumUpds chan checksumUpdate
+
 	//AQ smr.Quorum
 	//qs *smr.QuorumSystem
 	SQ smr.Majority
@@ -120,6 +122,8 @@ func NewReplica(rid int, addrs []string, exec, fastRead, dr, optExec, AQreconf b
 		historySize:  0,
 		historyStart: 0,
 
+		checksumUpds: make(chan checksumUpdate, 2),
+
 		optExec:     optExec,
 		fastRead:    fastRead,
 		deliverChan: make(chan CommandId, smr.CHAN_BUFFER_SIZE),
@@ -148,16 +152,17 @@ func NewReplica(rid int, addrs []string, exec, fastRead, dr, optExec, AQreconf b
 	r.batcher = NewBatcher(r, 16, releaseFastAck, func(_ *MLightSlowAck) {})
 	r.repchan = NewReplyChan(r)
 
-	//qs, err := smr.NewQuorumSystem(r.N/2+1, r.Replica, qfile)
-	//if err != nil {
-	//	log.Fatal(err)
-	//}
+	qs, err := smr.NewQuorumSystem(r.N/2+1, r.Replica, qfile)
+	if err != nil {
+		log.Fatal(err)
+	}
 	//r.qs = qs
-	//r.ballot = r.qs.BallotAt(0)
-	//if r.ballot == -1 {
-		//r.ballot = 0
-	//}
-	//r.cballot = r.ballot
+	r.ballot = qs.BallotAt(0)
+	if r.ballot == -1 {
+		r.ballot = 0
+	}
+	r.cballot = r.ballot
+	log.Println("the leader is:", r.leader())
 	//r.AQ = r.qs.AQ(r.ballot)
 	//r.gc = NewGc(r)
 	//if AQreconf {
@@ -269,6 +274,11 @@ func (r *Replica) run() {
 				r.deliverReadDesc(rDesc, cmdId)
 			} else {
 				r.getCmdDesc(cmdId, "deliver", nil)
+			}
+
+		case cUpd := <-r.checksumUpds:
+			if s, exists := r.sums[cUpd.key]; exists {
+				s.correct(cUpd.cmdId, cUpd.newHash)
 			}
 
 		case propose := <-r.ProposeChan:
@@ -459,6 +469,7 @@ func (r *Replica) fastAckFromLeader(msg *MFastAck, desc *commandDesc) {
 		// seems to be satisfied already
 
 		desc.phase = ACCEPT
+		cmd := desc.cmd
 		msgCmdId := msg.CmdId
 		dep := Dep(msg.Dep)
 		hs := desc.hs
@@ -473,6 +484,14 @@ func (r *Replica) fastAckFromLeader(msg *MFastAck, desc *commandDesc) {
 				}
 				//fmt.Println("sending slowAck", r.Id, msgCmdId, msg.Checksum, hs)
 				r.sender.SendToClient(msgCmdId.ClientId, lightSlowAck, r.cs.lightSlowAckRPC)
+
+				go func() {
+					for _, key := range keysOf(cmd) {
+						for _, h := range hs {
+							r.requestCorrection(key, msgCmdId, h)
+						}
+					}
+				}()
 			}
 		}()
 
@@ -930,4 +949,14 @@ func (r *Replica) getDepAndHashes(cmd state.Command, cmdId CommandId) (Dep, []SH
 	}
 
 	return dep, hashes
+}
+
+type checksumUpdate struct {
+	key     state.Key
+	cmdId   CommandId
+	newHash SHash
+}
+
+func (r *Replica) requestCorrection(key state.Key, cmdId CommandId, newHash SHash) {
+	r.checksumUpds <- checksumUpdate{key, cmdId, newHash}
 }
