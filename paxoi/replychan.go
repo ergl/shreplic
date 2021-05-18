@@ -55,6 +55,14 @@ func NewReplyChan(r *Replica) *replyChan {
 						Rep:     args.val,
 					}
 					r.sender.SendToClient(args.propose.ClientId, reply, r.cs.replyRPC)
+				} else if args.propose.Collocated && r.optExec {
+					acc := &MAccept{
+						Replica: r.Id,
+						Ballot:  r.ballot,
+						CmdId:   args.cmdId,
+						Rep:     args.val,
+					}
+					r.sender.SendToClient(args.propose.ClientId, acc, r.cs.acceptRPC)
 				}
 				r.historySize = (r.historySize % HISTORY_SIZE) + 1
 				args.finish <- (r.historySize - 1)

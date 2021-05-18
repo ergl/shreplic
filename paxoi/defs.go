@@ -185,6 +185,7 @@ type CommunicationSupply struct {
 	pingChan         chan fastrpc.Serializable
 	pingRepChan      chan fastrpc.Serializable
 	collectChan      chan fastrpc.Serializable
+	acceptChan       chan fastrpc.Serializable
 
 	fastAckRPC      uint8
 	slowAckRPC      uint8
@@ -200,6 +201,7 @@ type CommunicationSupply struct {
 	pingRPC         uint8
 	pingRepRPC      uint8
 	collectRPC      uint8
+	acceptRPC       uint8
 }
 
 func initCs(cs *CommunicationSupply, t *fastrpc.Table) {
@@ -219,6 +221,7 @@ func initCs(cs *CommunicationSupply, t *fastrpc.Table) {
 	cs.pingChan = make(chan fastrpc.Serializable, smr.CHAN_BUFFER_SIZE)
 	cs.pingRepChan = make(chan fastrpc.Serializable, smr.CHAN_BUFFER_SIZE)
 	cs.collectChan = make(chan fastrpc.Serializable, smr.CHAN_BUFFER_SIZE)
+	cs.acceptChan = make(chan fastrpc.Serializable, smr.CHAN_BUFFER_SIZE)
 
 	cs.fastAckRPC = t.Register(new(MFastAck), cs.fastAckChan)
 	cs.slowAckRPC = t.Register(new(MSlowAck), cs.slowAckChan)
@@ -234,6 +237,7 @@ func initCs(cs *CommunicationSupply, t *fastrpc.Table) {
 	cs.pingRPC = t.Register(new(MPing), cs.pingChan)
 	cs.pingRepRPC = t.Register(new(MPingRep), cs.pingRepChan)
 	cs.collectRPC = t.Register(new(MCollect), cs.collectChan)
+	cs.acceptRPC = t.Register(new(MAccept), cs.acceptChan)
 }
 
 type keyInfo interface {

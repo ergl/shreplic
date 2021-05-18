@@ -18,10 +18,12 @@ type Client struct {
 	ballot    int32
 	delivered map[CommandId]struct{}
 
-	SQ        smr.Majority
-	FQ        smr.ThreeQuarters
+	SQ        smr.QuorumI
+	FQ        smr.QuorumI
 	slowPathH *smr.MsgSet
 	fastPathH *smr.MsgSet
+
+	fixedMajority bool
 
 	slowPaths   int
 	alreadySlow map[CommandId]struct{}
@@ -54,6 +56,8 @@ func NewClient(maddr, collocated string, mport, reqNum, writes, psize, conflict 
 		SQ: smr.NewMajorityOf(*repNum),
 		FQ: smr.NewThreeQuartersOf(*repNum),
 
+		fixedMajority: true,
+
 		slowPaths:   0,
 		alreadySlow: make(map[CommandId]struct{}),
 	}
@@ -62,6 +66,10 @@ func NewClient(maddr, collocated string, mport, reqNum, writes, psize, conflict 
 	c.WaitResponse = func() error {
 		<-c.ready
 		return nil
+	}
+
+	if c.fixedMajority {
+		c.FQ = smr.NewMajorityOf(*repNum)
 	}
 
 	initCs(&c.cs, c.RPC)
@@ -106,6 +114,10 @@ func (c *Client) handleMsgs() {
 			reply := m.(*MReadReply)
 			c.handleReadReply(reply)*/
 
+		case m := <-c.cs.acceptChan:
+			accept := m.(*MAccept)
+			c.handleAccept(accept)
+
 		case m := <-c.cs.fastAckChan:
 			fastAck := m.(*MFastAck)
 			c.handleFastAck(fastAck, false)
@@ -142,6 +154,7 @@ func (c *Client) handleMsgs() {
 				}
 				c.handleFastAck(fastAck, false)
 				if _, exists := c.delivered[fastAck.CmdId]; !exists && fastAck.Checksum == nil {
+					//c.Println("got slowAck", fastAck.Replica, fastAck.CmdId)
 					//c.Println("wanna add", fastAck.Replica, fastAck.CmdId, false)
 					c.slowPathH.Add(fastAck.Replica, false, fastAck)
 				}
@@ -164,6 +177,7 @@ func (c *Client) handleFastAck(f *MFastAck, fromLeader bool) bool {
 		return false
 	}
 
+	//c.Println("got fastAck", f.Replica, f.CmdId, f.Checksum)
 	c.fastPathH.Add(f.Replica, fromLeader, f)
 	return true
 }
@@ -186,6 +200,7 @@ func (c *Client) handleLightSlowAck(ls *MLightSlowAck) {
 	c.handleFastAck(f, false)
 	if _, exists := c.delivered[f.CmdId]; !exists {
 		//c.Println("wanna add", f.Replica, f.CmdId, false)
+		//c.Println("got slowAck", f.Replica, f.CmdId)
 		c.slowPathH.Add(f.Replica, false, f)
 	}
 	// if c.handleFastAck(f, false) {
@@ -224,11 +239,26 @@ func (c *Client) handleReply(r *MReply) {
 	c.handleFastAck(f, true)
 	if _, exists := c.delivered[f.CmdId]; !exists {
 		//c.Println("wanna add", f.Replica, f.CmdId, true)
+		//c.Println("got Reply", r.Replica, r.CmdId)
 		c.slowPathH.Add(f.Replica, true, f)
 	}
 	// if c.handleFastAck(f, true) {
 	// 	c.slowPathH.Add(f.Replica, true, f)
 	// }
+}
+
+func (c *Client) handleAccept(a *MAccept) {
+	if _, exists := c.delivered[a.CmdId]; exists {
+		return
+	}
+	c.delivered[a.CmdId] = struct{}{}
+
+	c.val = a.Rep
+	c.Println("Slow Paths:", c.slowPaths)
+	c.Println("Returning:", c.val.String())
+	c.reinitFastAndSlowAcks()
+	c.ResChan <- c.val
+	c.ready <- struct{}{}
 }
 
 // func (c *Client) handleReadReply(r *MReadReply) {

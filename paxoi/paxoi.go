@@ -39,8 +39,8 @@ type Replica struct {
 
 	//AQ smr.Quorum
 	//qs *smr.QuorumSystem
-	SQ smr.Majority
-	FQ smr.ThreeQuarters
+	SQ smr.QuorumI
+	FQ smr.QuorumI
 	cs CommunicationSupply
 
 	optExec     bool
@@ -153,7 +153,7 @@ func NewReplica(rid int, addrs []string, exec, fastRead, dr, optExec, AQreconf b
 	r.repchan = NewReplyChan(r)
 
 	qs, err := smr.NewQuorumSystem(r.N/2+1, r.Replica, qfile)
-	if err != nil {
+	if err != nil && err != smr.THREE_QUARTERS {
 		log.Fatal(err)
 	}
 	//r.qs = qs
@@ -162,14 +162,18 @@ func NewReplica(rid int, addrs []string, exec, fastRead, dr, optExec, AQreconf b
 		r.ballot = 0
 	}
 	r.cballot = r.ballot
-	log.Println("the leader is:", r.leader())
-	//r.AQ = r.qs.AQ(r.ballot)
+	//log.Println("the leader is:", r.leader())
+	if err != smr.THREE_QUARTERS {
+		r.FQ = qs.AQ(r.ballot)
+	}
 	//r.gc = NewGc(r)
 	//if AQreconf {
 	//	r.dl = NewDelayLog(r)
 	//}
 
 	initCs(&r.cs, r.RPC)
+
+	log.Println("the leader is:", r.leader(), "ballot is:", r.ballot)
 
 	tools.HookUser1(func() {
 		totalNum := 0
@@ -369,15 +373,16 @@ func (r *Replica) handlePropose(msg *smr.GPropose, desc *commandDesc, cmdId Comm
 	desc.propose = msg
 	desc.cmd = msg.Command
 
-	// if !r.AQ.Contains(r.Id) {
-	// 	desc.phase = PAYLOAD_ONLY
-	// 	desc.afterPropagate.Recall()
-	// 	return
-	// }
+	if !r.FQ.Contains(r.Id) {
+		//desc.phase = PAYLOAD_ONLY
+		desc.afterPropagate.Recall()
+		return
+	}
 
 	desc.dep = desc.proposeDep
 	desc.phase = PRE_ACCEPT
-	if desc.afterPropagate.Recall() && desc.slowPath {
+	if (desc.afterPropagate.Recall() && desc.slowPath) ||
+		r.delivered.Has(cmdId.String()) {
 		// in this case a process already sent a MSlowAck
 		// message, hence, no need to send MFastAck
 		return
@@ -448,12 +453,17 @@ func (r *Replica) handleFastAck(msg *MFastAck, desc *commandDesc) {
 }
 
 func (r *Replica) fastAckFromLeader(msg *MFastAck, desc *commandDesc) {
-	// if !r.AQ.Contains(r.Id) {
+
+	// if !r.FQ.Contains(r.Id) {
 	// 	desc.afterPropagate.Call(func() {
 	// 		if r.status == NORMAL && r.ballot == msg.Ballot {
 	// 			desc.dep = msg.Dep
 	// 		}
-	// 		desc.fastAndSlowAcks.Add(msg.Replica, true, msg)
+	// 		desc.slowPathH.Add(msg.Replica, true, msg)
+	// 		if r.delivered.Has(msgCmdId.String()) {
+	// 			return
+	// 		}
+	// 		desc.fastPathH.Add(msg.Replica, true, msg)
 	// 	})
 	// 	return
 	// }
@@ -470,24 +480,33 @@ func (r *Replica) fastAckFromLeader(msg *MFastAck, desc *commandDesc) {
 
 		desc.phase = ACCEPT
 		cmd := desc.cmd
-		msgCmdId := msg.CmdId
 		dep := Dep(msg.Dep)
 		hs := desc.hs
-		eq := desc.dep.Equals(dep)
+		neq := !desc.dep.Equals(dep)
+		sendSlowAck := r.leader() != r.Id && (r.SQ.Contains(r.Id) ||
+			(neq && r.FQ.Contains(r.Id)))
+		msgCmdId := msg.CmdId
+		msgChecksum := msg.Checksum
 
 		defer func() {
-			if eq && r.optExec && !SHashesEq(hs, msg.Checksum) {
+			if r.leader() == r.Id || r.delivered.Has(msgCmdId.String()) {
+				return
+			}
+			if !sendSlowAck && r.optExec && !SHashesEq(hs, msgChecksum) {
+				//fmt.Println("!!-", msgCmdId, hs, msgChecksum)
+
 				lightSlowAck := &MLightSlowAck{
 					Replica: r.Id,
 					Ballot:  r.ballot,
 					CmdId:   msgCmdId,
 				}
 				//fmt.Println("sending slowAck", r.Id, msgCmdId, msg.Checksum, hs)
+
 				r.sender.SendToClient(msgCmdId.ClientId, lightSlowAck, r.cs.lightSlowAckRPC)
 
 				go func() {
 					for _, key := range keysOf(cmd) {
-						for _, h := range hs {
+						for _, h := range msgChecksum {
 							r.requestCorrection(key, msgCmdId, h)
 						}
 					}
@@ -498,22 +517,26 @@ func (r *Replica) fastAckFromLeader(msg *MFastAck, desc *commandDesc) {
 		desc.slowPathH.Add(msg.Replica, true, msg)
 		//desc.fastPathH.Add(msg.Replica, true, msg)
 		//desc.fastAndSlowAcks.Add(msg.Replica, true, msg)
-		if r.delivered.Has(msgCmdId.String()) {
+		delivered := r.delivered.Has(msgCmdId.String())
+		//if r.delivered.Has(msgCmdId.String()) {
 			// since at this point msg can be already deallocated,
 			// it is important to check the saved value,
 			// all this can happen if desc.seq == true
-			return
-		}
-		desc.fastPathH.Add(msg.Replica, true, msg)
-		if r.delivered.Has(msgCmdId.String()) {
-			return
+		//	return
+		//}
+		if !delivered {
+			desc.fastPathH.Add(msg.Replica, true, msg)
+			delivered = r.delivered.Has(msgCmdId.String())
+			//if r.delivered.Has(msgCmdId.String()) {
+			//	return
+			//}
 		}
 		//equals, diffs := desc.dep.EqualsAndDiff(dep)
 
 		//fmt.Println("got slowAck", r.Id, msgCmdId, msg.Checksum, desc.hs)
 
 		//if !equals {
-		if !eq {
+		if sendSlowAck {
 			// oldDefered := desc.defered
 			// desc.defered = func() {
 			// 	for cmdId := range diffs {
@@ -528,8 +551,10 @@ func (r *Replica) fastAckFromLeader(msg *MFastAck, desc *commandDesc) {
 			// 	oldDefered()
 			// }
 
-			desc.dep = dep
-			desc.slowPath = true
+			if neq && !delivered {
+				desc.dep = dep
+				desc.slowPath = true
+			}
 
 			lightSlowAck := &MLightSlowAck{
 				Replica: r.Id,
@@ -541,9 +566,17 @@ func (r *Replica) fastAckFromLeader(msg *MFastAck, desc *commandDesc) {
 				r.batcher.SendLightSlowAck(lightSlowAck)
 			} else {
 				//fmt.Println("sending slowAck (2)", r.Id, msgCmdId, msg.Checksum, desc.hs)
-				r.batcher.SendLightSlowAckClient(lightSlowAck, desc.propose.ClientId)
+				//r.batcher.SendLightSlowAckClient(lightSlowAck, desc.propose.ClientId)
+
+				if r.FQ.Size() == r.N/2 + 1 && !r.FQ.Contains(r.Id) {
+					r.sender.SendToClient(msgCmdId.ClientId, lightSlowAck, r.cs.lightSlowAckRPC)
+				} else {
+					r.batcher.SendLightSlowAckClient(lightSlowAck, msgCmdId.ClientId)
+				}
 			}
-			r.handleLightSlowAck(lightSlowAck, desc)
+			if !delivered {
+				r.handleLightSlowAck(lightSlowAck, desc)
+			}
 		}//  else if r.optExec && !SHashesEq(desc.hs, msg.Checksum) {
 		// 	lightSlowAck := &MLightSlowAck{
 		// 		Replica: r.Id,

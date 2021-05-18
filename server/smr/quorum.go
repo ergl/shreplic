@@ -47,7 +47,10 @@ type QuorumsOfLeader map[int32]Quorum
 
 type QuorumSet map[int32]QuorumsOfLeader
 
-var NO_QUORUM_FILE = errors.New("Quorum file is not provided")
+var (
+	NO_QUORUM_FILE = errors.New("Quorum file is not provided")
+	THREE_QUARTERS = errors.New("ThreeQuarters")
+)
 
 func NewQuorum(size int) Quorum {
 	return make(map[int32]struct{}, size)
@@ -106,7 +109,7 @@ func NewQuorumSystem(quorumSize int, r *Replica, qfile string) (*QuorumSystem, e
 			qs:      NewQuorumSet(quorumSize, r.N),
 			ballots: nil,
 		}, nil
-	} else if err != nil {
+	} else if err != nil && err != THREE_QUARTERS {
 		return nil, err
 	}
 
@@ -129,7 +132,7 @@ func NewQuorumSystem(quorumSize int, r *Replica, qfile string) (*QuorumSystem, e
 	})
 
 	sys.qs = qs
-	return sys, nil
+	return sys, err
 }
 
 func (sys *QuorumSystem) SameHigher(sameAs, higherThan int32) int32 {
@@ -169,7 +172,7 @@ func NewQuorumsFromFile(qfile string, r *Replica) ([]Quorum, []int32, error) {
 	AQs := []Quorum{NewQuorum(r.N/2 + 1)}
 	s := bufio.NewScanner(f)
 	for s.Scan() {
-		id := r.Id
+		id := int32(-1)
 		isLeader := false
 		addr := ""
 
@@ -179,6 +182,9 @@ func NewQuorumsFromFile(qfile string, r *Replica) ([]Quorum, []int32, error) {
 				i++
 				leaders = append(leaders, 0)
 				AQs = append(AQs, NewQuorum(r.N/2+1))
+				continue
+			} else if data[0] == "3/4" {
+				err = THREE_QUARTERS
 				continue
 			}
 			addr = data[0]
@@ -195,13 +201,18 @@ func NewQuorumsFromFile(qfile string, r *Replica) ([]Quorum, []int32, error) {
 			}
 		}
 
-		AQs[i][id] = struct{}{}
-		if isLeader {
-			leaders[i] = id
+		if id != -1 {
+			AQs[i][id] = struct{}{}
+			if isLeader {
+				leaders[i] = id
+			}
 		}
 	}
 
-	return AQs, leaders, s.Err()
+	if serr := s.Err(); serr != nil {
+		err = serr
+	}
+	return AQs, leaders, err
 }
 
 func NewQuorumsOfLeader() QuorumsOfLeader {
