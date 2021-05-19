@@ -75,6 +75,9 @@ func NewClient(maddr, collocated string, mport, reqNum, writes, psize, conflict 
 	initCs(&c.cs, c.RPC)
 	c.reinitFastAndSlowAcks()
 
+	c.Println("SQ:", c.SQ)
+	c.Println("FQ:", c.FQ)
+
 	go c.handleMsgs()
 
 	return c
@@ -143,6 +146,9 @@ func (c *Client) handleMsgs() {
 				fastAck.Replica = optAcks.Replica
 				fastAck.Ballot = optAcks.Ballot
 				fastAck.CmdId = ack.CmdId
+				if _, exists := c.delivered[fastAck.CmdId]; exists {
+					continue
+				}
 				if !IsNilDepOfCmdId(ack.CmdId, ack.Dep) {
 					fastAck.Checksum = ack.Checksum
 				} else {
@@ -252,6 +258,8 @@ func (c *Client) handleAccept(a *MAccept) {
 		return
 	}
 	c.delivered[a.CmdId] = struct{}{}
+
+	//c.Println("got Accept", a.Replica, a.CmdId)
 
 	c.val = a.Rep
 	c.Println("Slow Paths:", c.slowPaths)

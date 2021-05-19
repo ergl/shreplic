@@ -192,6 +192,9 @@ func NewReplica(rid int, addrs []string, exec, fastRead, dr, optExec, AQreconf b
 		fmt.Printf("Number of slow paths: %d\n", slowPaths)
 	})
 
+	log.Println("SQ:", r.SQ)
+	log.Println("FQ:", r.FQ)
+
 	go r.run()
 
 	return r

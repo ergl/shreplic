@@ -4,7 +4,7 @@ type MsgSetHandler func(interface{}, []interface{})
 
 type MsgSet struct {
 	q         QuorumI
-	msgs      []interface{}
+	msgs      map[int32]interface{}
 	leaderMsg interface{}
 	accept    func(interface{}, interface{}) bool
 	freeMsg   func(interface{})
@@ -16,7 +16,7 @@ func NewMsgSet(q QuorumI, accept func(interface{}, interface{}) bool,
 
 	return &MsgSet{
 		q:         q,
-		msgs:      []interface{}{},
+		msgs:      map[int32]interface{}{},
 		leaderMsg: nil,
 		accept:    accept,
 		freeMsg:   freeMsg,
@@ -32,11 +32,14 @@ func (ms *MsgSet) ReinitMsgSet(q QuorumI, accept func(interface{}, interface{}) 
 	}
 
 	ms.q = q
-	ms.msgs = []interface{}{}
+	//ms.msgs = []interface{}{}
 	ms.leaderMsg = nil
 	ms.accept = accept
 	ms.freeMsg = freeMsg
 	ms.handler = handler
+	for rep := range ms.msgs {
+		delete(ms.msgs, rep)
+	}
 	return ms
 }
 
@@ -46,14 +49,20 @@ func (ms *MsgSet) Add(repId int32, isLeader bool, msg interface{}) bool {
 		return false
 	}
 
+	if _, seen := ms.msgs[repId]; ms.leaderMsg != nil && seen {
+		return false
+	}
+
 	added := false
 
 	if isLeader {
 		ms.leaderMsg = msg
-		newMsgs := []interface{}{}
-		for _, fmsg := range ms.msgs {
-			if ms.accept(fmsg, ms.leaderMsg) {
-				newMsgs = append(newMsgs, fmsg)
+		newMsgs := map[int32]interface{}{}
+		for frepId, fmsg := range ms.msgs {
+			if _, seen := newMsgs[frepId];
+			!seen && ms.accept(fmsg, ms.leaderMsg) {
+				//newMsgs = append(newMsgs, fmsg)
+				newMsgs[frepId] = fmsg
 			} else {
 				ms.freeMsg(fmsg)
 			}
@@ -61,15 +70,22 @@ func (ms *MsgSet) Add(repId int32, isLeader bool, msg interface{}) bool {
 		ms.msgs = newMsgs
 		added = true
 	} else if ms.accept(msg, ms.leaderMsg) {
-		ms.msgs = append(ms.msgs, msg)
+		ms.msgs[repId] = msg
+		//ms.msgs = append(ms.msgs, msg)
 		added = true
 	} else {
 		ms.freeMsg(msg)
 	}
 
-	if len(ms.msgs) == ms.q.Size() ||
-		(len(ms.msgs) == ms.q.Size()-1 && ms.leaderMsg != nil) {
-		ms.handler(ms.leaderMsg, ms.msgs)
+	if len(ms.msgs) >= ms.q.Size() ||
+		(len(ms.msgs) >= ms.q.Size()-1 && ms.leaderMsg != nil) {
+		m := make([]interface{}, len(ms.msgs))
+		i := 0
+		for _, v := range ms.msgs {
+			m[i] = v
+			i++
+		}
+		ms.handler(ms.leaderMsg, m)
 	}
 
 	return added
