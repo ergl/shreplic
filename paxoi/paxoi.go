@@ -38,7 +38,7 @@ type Replica struct {
 	checksumUpds chan checksumUpdate
 
 	//AQ smr.Quorum
-	//qs *smr.QuorumSystem
+	qs *smr.QuorumSystem
 	SQ smr.QuorumI
 	FQ smr.QuorumI
 	cs CommunicationSupply
@@ -53,7 +53,7 @@ type Replica struct {
 
 	//dl            *DelayLog
 	//recNum        int
-	//recover       chan int32
+	recover        chan int32
 	recStart       time.Time
 	newLeaderAckNs *smr.MsgSet
 
@@ -132,7 +132,7 @@ func NewReplica(rid int, addrs []string, exec, fastRead, dr, optExec, AQreconf b
 		routineCount: 0,
 
 		//recNum:  0,
-		//recover: make(chan int32, 8),
+		recover: make(chan int32, 8),
 
 		descPool: sync.Pool{
 			New: func() interface{} {
@@ -156,15 +156,15 @@ func NewReplica(rid int, addrs []string, exec, fastRead, dr, optExec, AQreconf b
 	if err != nil && err != smr.THREE_QUARTERS {
 		log.Fatal(err)
 	}
-	//r.qs = qs
-	r.ballot = qs.BallotAt(0)
+	r.qs = qs
+	r.ballot = r.qs.BallotAt(0)
 	if r.ballot == -1 {
 		r.ballot = 0
 	}
 	r.cballot = r.ballot
 	//log.Println("the leader is:", r.leader())
 	if err != smr.THREE_QUARTERS {
-		r.FQ = qs.AQ(r.ballot)
+		r.FQ = r.qs.AQ(r.ballot)
 	}
 	//r.gc = NewGc(r)
 	//if AQreconf {
@@ -202,12 +202,12 @@ func NewReplica(rid int, addrs []string, exec, fastRead, dr, optExec, AQreconf b
 
 // TODO: do something more elegant
 func (r *Replica) BeTheLeader(_ *smr.BeTheLeaderArgs, reply *smr.BeTheLeaderReply) error {
-	// if !r.delivered.IsEmpty() {
-	// 	r.recover <- r.qs.BallotAt(r.recNum + 1)
-	// } else {
+	if !r.delivered.IsEmpty() {
+		r.recover <- r.qs.BallotAt(1)
+	} //else {
 	// 	reply.Leader = r.leader()
 	// }
-	// reply.NextLeader = smr.Leader(r.qs.BallotAt(r.recNum+1), r.N)
+	reply.NextLeader = smr.Leader(r.qs.BallotAt(1), r.N)
 	return nil
 }
 

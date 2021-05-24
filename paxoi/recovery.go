@@ -34,6 +34,8 @@ func (r *Replica) handleNewLeader(msg *MNewLeader) {
 		Ballot:  r.ballot,
 		Cballot: r.cballot,
 	}
+	r.fillNewLeaderAckN(newLeaderAckN)
+
 	if msg.Replica != r.Id {
 		r.sender.SendTo(msg.Replica, newLeaderAckN, r.cs.newLeaderAckNRPC)
 	} else {
@@ -71,10 +73,47 @@ func (r *Replica) handleNewLeaderAckN(msg *MNewLeaderAckN) {
 }
 
 func (r *Replica) handleNewLeaderAckNs(_ interface{}, msgs []interface{}) {
+	maxCbal := int32(-1)
+	var U map[*MNewLeaderAckN]struct{}
 
+	for _, msg := range msgs {
+		newLeaderAck := msg.(*MNewLeaderAckN)
+		if maxCbal < newLeaderAck.Cballot {
+			U = make(map[*MNewLeaderAckN]struct{})
+			maxCbal = newLeaderAck.Cballot
+		}
+		if maxCbal == newLeaderAck.Cballot {
+			U[newLeaderAck] = struct{}{}
+		}
+	}
+
+	phases := make(map[CommandId]int)
+	cmds := make(map[CommandId]state.Command)
+	deps := make(map[CommandId]Dep)
+
+	for newLeaderAckN := range U {
+		for i, phase := range newLeaderAckN.Phases {
+			if phase == COMMIT || phase == ACCEPT {
+				cmdId := newLeaderAckN.CmdIds[i]
+				phases[cmdId] = phase
+				cmds[cmdId] = newLeaderAckN.Cmds[i]
+				deps[cmdId] = Dep(newLeaderAckN.Deps[i].Dep)
+			}
+		}
+	}
+
+	sync := &MSync{
+		Replica: r.Id,
+		Ballot:  r.ballot,
+		Phases:  phases,
+		Cmds:    cmds,
+		Deps:    deps,
+	}
+	r.sender.SendToAll(sync, r.cs.syncRPC)
+	r.handleSync(sync)
 }
 
-// func (r *Replica) handleNewLeaderAcks(_ interface{}, msgs []interface{}) {
+//  func (r *Replica) handleNewLeaderAcks(_ interface{}, msgs []interface{}) {
 // 	maxCbal := int32(-1)
 // 	var U map[*MNewLeaderAck]struct{}
 
@@ -191,6 +230,46 @@ func (r *Replica) handleNewLeaderAckNs(_ interface{}, msgs []interface{}) {
 // 	r.handleSync(sync)
 // }
 
+func (r *Replica) fillNewLeaderAckN(newLeaderAckN *MNewLeaderAckN) {
+	cmdIds := []CommandId{}
+	phases := []int{}
+	cmds := []state.Command{}
+	deps := []SDep{}
+	seen := make(map[CommandId]struct{})
+
+	r.cmdDescs.IterCb(func(_ string, v interface{}) {
+		desc := v.(*commandDesc)
+		if desc.propose != nil {
+			cmdId := CommandId{
+				ClientId: desc.propose.ClientId,
+				SeqNum:   desc.propose.CommandId,
+			}
+			if _, exists := seen[cmdId]; !exists {
+				seen[cmdId] = struct{}{}
+				cmdIds = append(cmdIds, cmdId)
+				phases = append(phases, desc.phase)
+				cmds = append(cmds, desc.cmd)
+				deps = append(deps, SDep{desc.dep})
+			}
+		}
+	})
+
+	for cmdId, _ := range r.proposes {
+		if _, exists := seen[cmdId]; exists || r.delivered.Has(cmdId.String()) {
+			continue
+		}
+		cmdIds = append(cmdIds, cmdId)
+		phases = append(phases, ACCEPT)
+		cmds = append(cmds, state.NOOP()[0])
+		deps = append(deps, SDep{[]CommandId{}})
+	}
+
+	newLeaderAckN.CmdIds = cmdIds
+	newLeaderAckN.Phases = phases
+	newLeaderAckN.Cmds = cmds
+	newLeaderAckN.Deps = deps
+}
+
 func (r *Replica) handleSync(msg *MSync) {
 	if r.ballot > msg.Ballot || (r.ballot == msg.Ballot && r.status == NORMAL) {
 		return
@@ -232,7 +311,10 @@ func (r *Replica) handleSync(msg *MSync) {
 	r.ballot = msg.Ballot
 	r.cballot = msg.Ballot
 	// TODO: update FQ, SQ
-	//r.AQ = r.qs.AQ(r.ballot)
+	switch r.FQ.(type) {
+	case smr.Quorum:
+		r.FQ = r.qs.AQ(r.ballot)
+	}
 	r.repchan = NewReplyChan(r)
 	r.historySize = 0
 	//r.gc = NewGc(r)
