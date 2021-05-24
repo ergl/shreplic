@@ -54,11 +54,11 @@ type Replica struct {
 	//dl            *DelayLog
 	//recNum        int
 	//recover       chan int32
-	//recStart      time.Time
-	//newLeaderAcks *smr.MsgSet
+	recStart       time.Time
+	newLeaderAckNs *smr.MsgSet
 
 	// TODO: get rid of this
-	//proposes map[CommandId]*smr.GPropose
+	proposes map[CommandId]*smr.GPropose
 }
 
 type commandDesc struct {
@@ -140,7 +140,7 @@ func NewReplica(rid int, addrs []string, exec, fastRead, dr, optExec, AQreconf b
 			},
 		},
 
-		//proposes: make(map[CommandId]*smr.GPropose),
+		proposes: make(map[CommandId]*smr.GPropose),
 	}
 
 	useFastAckPool = pl > 1
@@ -291,7 +291,7 @@ func (r *Replica) run() {
 		case propose := <-r.ProposeChan:
 			cmdId.ClientId = propose.ClientId
 			cmdId.SeqNum = propose.CommandId
-			//r.proposes[cmdId] = propose
+			r.proposes[cmdId] = propose
 			if r.fastRead && propose.Command.Op == state.GET {
 				r.handleRead(cmdId, propose)
 			} else {

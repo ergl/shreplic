@@ -171,37 +171,39 @@ func keysOf(cmd state.Command) []state.Key {
 type CommunicationSupply struct {
 	maxLatency time.Duration
 
-	fastAckChan      chan fastrpc.Serializable
-	slowAckChan      chan fastrpc.Serializable
-	lightSlowAckChan chan fastrpc.Serializable
-	acksChan         chan fastrpc.Serializable
-	optAcksChan      chan fastrpc.Serializable
-	replyChan        chan fastrpc.Serializable
-	readReplyChan    chan fastrpc.Serializable
-	newLeaderChan    chan fastrpc.Serializable
-	newLeaderAckChan chan fastrpc.Serializable
-	shareStateChan   chan fastrpc.Serializable
-	syncChan         chan fastrpc.Serializable
-	pingChan         chan fastrpc.Serializable
-	pingRepChan      chan fastrpc.Serializable
-	collectChan      chan fastrpc.Serializable
-	acceptChan       chan fastrpc.Serializable
+	fastAckChan       chan fastrpc.Serializable
+	slowAckChan       chan fastrpc.Serializable
+	lightSlowAckChan  chan fastrpc.Serializable
+	acksChan          chan fastrpc.Serializable
+	optAcksChan       chan fastrpc.Serializable
+	replyChan         chan fastrpc.Serializable
+	readReplyChan     chan fastrpc.Serializable
+	newLeaderChan     chan fastrpc.Serializable
+	//newLeaderAckChan  chan fastrpc.Serializable
+	newLeaderAckNChan chan fastrpc.Serializable
+	shareStateChan    chan fastrpc.Serializable
+	syncChan          chan fastrpc.Serializable
+	pingChan          chan fastrpc.Serializable
+	pingRepChan       chan fastrpc.Serializable
+	collectChan       chan fastrpc.Serializable
+	acceptChan        chan fastrpc.Serializable
 
-	fastAckRPC      uint8
-	slowAckRPC      uint8
-	lightSlowAckRPC uint8
-	acksRPC         uint8
-	optAcksRPC      uint8
-	replyRPC        uint8
-	readReplyRPC    uint8
-	newLeaderRPC    uint8
-	newLeaderAckRPC uint8
-	shareStateRPC   uint8
-	syncRPC         uint8
-	pingRPC         uint8
-	pingRepRPC      uint8
-	collectRPC      uint8
-	acceptRPC       uint8
+	fastAckRPC       uint8
+	slowAckRPC       uint8
+	lightSlowAckRPC  uint8
+	acksRPC          uint8
+	optAcksRPC       uint8
+	replyRPC         uint8
+	readReplyRPC     uint8
+	newLeaderRPC     uint8
+	//newLeaderAckRPC  uint8
+	newLeaderAckNRPC uint8
+	shareStateRPC    uint8
+	syncRPC          uint8
+	pingRPC          uint8
+	pingRepRPC       uint8
+	collectRPC       uint8
+	acceptRPC        uint8
 }
 
 func initCs(cs *CommunicationSupply, t *fastrpc.Table) {
@@ -215,8 +217,9 @@ func initCs(cs *CommunicationSupply, t *fastrpc.Table) {
 	cs.replyChan = make(chan fastrpc.Serializable, smr.CHAN_BUFFER_SIZE)
 	cs.readReplyChan = make(chan fastrpc.Serializable, smr.CHAN_BUFFER_SIZE)
 	cs.newLeaderChan = make(chan fastrpc.Serializable, smr.CHAN_BUFFER_SIZE)
-	cs.newLeaderAckChan = make(chan fastrpc.Serializable, smr.CHAN_BUFFER_SIZE)
-	cs.shareStateChan = make(chan fastrpc.Serializable, smr.CHAN_BUFFER_SIZE)
+	//cs.newLeaderAckChan = make(chan fastrpc.Serializable, smr.CHAN_BUFFER_SIZE)
+	cs.newLeaderAckNChan = make(chan fastrpc.Serializable, smr.CHAN_BUFFER_SIZE)
+	//cs.shareStateChan = make(chan fastrpc.Serializable, smr.CHAN_BUFFER_SIZE)
 	cs.syncChan = make(chan fastrpc.Serializable, smr.CHAN_BUFFER_SIZE)
 	cs.pingChan = make(chan fastrpc.Serializable, smr.CHAN_BUFFER_SIZE)
 	cs.pingRepChan = make(chan fastrpc.Serializable, smr.CHAN_BUFFER_SIZE)
@@ -231,8 +234,9 @@ func initCs(cs *CommunicationSupply, t *fastrpc.Table) {
 	cs.replyRPC = t.Register(new(MReply), cs.replyChan)
 	cs.readReplyRPC = t.Register(new(MReadReply), cs.readReplyChan)
 	cs.newLeaderRPC = t.Register(new(MNewLeader), cs.newLeaderChan)
-	cs.newLeaderAckRPC = t.Register(new(MNewLeaderAck), cs.newLeaderAckChan)
-	cs.shareStateRPC = t.Register(new(MShareState), cs.shareStateChan)
+	//cs.newLeaderAckRPC = t.Register(new(MNewLeaderAck), cs.newLeaderAckChan)
+	cs.newLeaderAckNRPC = t.Register(new(MNewLeaderAckN), cs.newLeaderAckNChan)
+	//cs.shareStateRPC = t.Register(new(MShareState), cs.shareStateChan)
 	cs.syncRPC = t.Register(new(MSync), cs.syncChan)
 	cs.pingRPC = t.Register(new(MPing), cs.pingChan)
 	cs.pingRepRPC = t.Register(new(MPingRep), cs.pingRepChan)
