@@ -99,6 +99,7 @@ func (master *Master) run() {
 				if err != nil {
 					log.Fatal("Not today Zurg!")
 				}
+				smr.UpdateBeTheLeaderReply(btlReply)
 				if btlReply.Leader != -1 && btlReply.Leader != int32(i) {
 					master.leader[i] = false
 					master.leader[int(btlReply.Leader)] = true
@@ -138,12 +139,13 @@ func (master *Master) run() {
 			err := master.nodes[i].Call("Replica.BeTheLeader",
 				new(smr.BeTheLeaderArgs), btlReply)
 			if err == nil {
+				smr.UpdateBeTheLeaderReply(btlReply)
 				leaderI := i
 				if btlReply.Leader != -1 {
 					leaderI = int(btlReply.Leader)
 				}
 				master.leader[leaderI] = true
-				master.nextLeader = int(btlReply.Leader)
+				master.nextLeader = int(btlReply.NextLeader)
 				log.Printf("Replica %d is the new leader", leaderI)
 				return nil
 			}

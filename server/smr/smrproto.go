@@ -89,6 +89,15 @@ func NewBeTheLeaderReply() *BeTheLeaderReply {
 	}
 }
 
+func UpdateBeTheLeaderReply(btlr *BeTheLeaderReply) {
+	if btlr.Leader == -2 {
+		btlr.Leader = 0
+	}
+	if btlr.NextLeader == -2 {
+		btlr.NextLeader = 0
+	}
+}
+
 func (r *BeTheLeaderReply) IsDefault() bool {
 	return r.Leader == -1 && r.NextLeader == -1
 }

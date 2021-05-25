@@ -43,6 +43,8 @@ type Replica struct {
 	FQ smr.QuorumI
 	cs CommunicationSupply
 
+	fixedMajority bool
+
 	optExec     bool
 	fastRead    bool
 	deliverChan chan CommandId
@@ -124,6 +126,8 @@ func NewReplica(rid int, addrs []string, exec, fastRead, dr, optExec, AQreconf b
 
 		checksumUpds: make(chan checksumUpdate, 2),
 
+		fixedMajority: false,
+
 		optExec:     optExec,
 		fastRead:    fastRead,
 		deliverChan: make(chan CommandId, smr.CHAN_BUFFER_SIZE),
@@ -164,6 +168,7 @@ func NewReplica(rid int, addrs []string, exec, fastRead, dr, optExec, AQreconf b
 	r.cballot = r.ballot
 	//log.Println("the leader is:", r.leader())
 	if err != smr.THREE_QUARTERS {
+		r.fixedMajority = true
 		r.FQ = r.qs.AQ(r.ballot)
 	}
 	//r.gc = NewGc(r)
@@ -203,11 +208,19 @@ func NewReplica(rid int, addrs []string, exec, fastRead, dr, optExec, AQreconf b
 // TODO: do something more elegant
 func (r *Replica) BeTheLeader(_ *smr.BeTheLeaderArgs, reply *smr.BeTheLeaderReply) error {
 	if !r.delivered.IsEmpty() {
-		r.recover <- r.qs.BallotAt(1)
-	} //else {
-	// 	reply.Leader = r.leader()
-	// }
+		b := r.qs.BallotAt(1)
+		r.recover <- b
+		reply.Leader = r.Id
+	} else {
+		reply.Leader = r.leader()
+	}
 	reply.NextLeader = smr.Leader(r.qs.BallotAt(1), r.N)
+	if reply.Leader == 0 {
+		reply.Leader = -2
+	}
+	if reply.NextLeader == 0 {
+		reply.NextLeader = -2
+	}
 	return nil
 }
 
@@ -248,33 +261,33 @@ func (r *Replica) run() {
 		// 	}
 		// 	r.recover <- r.qs.BallotOf(r.Id, newAQ)
 
-		// case newBallot := <-r.recover:
-		// 	newLeader := &MNewLeader{
-		// 		Replica: r.Id,
-		// 		Ballot:  r.ballot,
-		// 	}
-		// 	if newBallot != -1 {
-		// 		if newBallot > newLeader.Ballot {
-		// 			newLeader.Ballot = newBallot
-		// 		} else {
-		// 			newLeader.Ballot = r.qs.SameHigher(newBallot, newLeader.Ballot)
-		// 		}
-		// 	} else {
-		// 		newLeader.Ballot = smr.NextBallotOf(r.Id, newLeader.Ballot, r.N)
-		// 	}
-		// 	for quorumIsAlive := false; !quorumIsAlive; {
-		// 		quorumIsAlive = true
-		// 		for rid := range r.qs.AQ(newLeader.Ballot) {
-		// 			if rid != r.Id && !r.Alive[rid] {
-		// 				newLeader.Ballot = smr.NextBallotOf(r.Id, newLeader.Ballot, r.N)
-		// 				quorumIsAlive = false
-		// 				break
-		// 			}
-		// 		}
-		// 	}
-		// 	r.sender.SendToAll(newLeader, r.cs.newLeaderRPC)
-		// 	r.reinitNewLeaderAcks()
-		// 	r.handleNewLeader(newLeader)
+		case newBallot := <-r.recover:
+			newLeader := &MNewLeader{
+				Replica: r.Id,
+				Ballot:  r.ballot,
+			}
+			if newBallot != -1 {
+				if newBallot > newLeader.Ballot {
+					newLeader.Ballot = newBallot
+				} else {
+					newLeader.Ballot = r.qs.SameHigher(newBallot, newLeader.Ballot)
+				}
+			} else {
+				newLeader.Ballot = smr.NextBallotOf(r.Id, newLeader.Ballot, r.N)
+			}
+			for quorumIsAlive := false; r.fixedMajority && !quorumIsAlive; {
+				quorumIsAlive = true
+				for rid := range r.qs.AQ(newLeader.Ballot) {
+					if rid != r.Id && !r.Alive[rid] {
+						newLeader.Ballot = smr.NextBallotOf(r.Id, newLeader.Ballot, r.N)
+						quorumIsAlive = false
+						break
+					}
+				}
+			}
+			r.sender.SendToAll(newLeader, r.cs.newLeaderRPC)
+			r.reinitNewLeaderAckNs()
+			r.handleNewLeader(newLeader)
 
 		case cmdId := <-r.deliverChan:
 			if rDesc, exists := r.reads[cmdId]; exists {
@@ -345,13 +358,13 @@ func (r *Replica) run() {
 				r.getCmdDesc(fastAck.CmdId, fastAck, nil)
 			}
 
-		// case m := <-r.cs.newLeaderChan:
-		// 	newLeader := m.(*MNewLeader)
-		// 	r.handleNewLeader(newLeader)
+		case m := <-r.cs.newLeaderChan:
+			newLeader := m.(*MNewLeader)
+			r.handleNewLeader(newLeader)
 
-		// case m := <-r.cs.syncChan:
-		// 	sync := m.(*MSync)
-		// 	r.handleSync(sync)
+		case m := <-r.cs.syncChan:
+			sync := m.(*MSync)
+			r.handleSync(sync)
 
 		// case m := <-r.cs.pingChan:
 		// 	ping := m.(*MPing)

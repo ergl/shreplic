@@ -15,7 +15,7 @@ func (r *Replica) handleNewLeader(msg *MNewLeader) {
 	if r.ballot >= msg.Ballot {
 		return
 	}
-	log.Println("Recovering...")
+	log.Println("Recovering... with the ballot", msg.Ballot)
 	//r.recNum++
 
 	r.status = RECOVERING
@@ -310,9 +310,7 @@ func (r *Replica) handleSync(msg *MSync) {
 	r.status = NORMAL
 	r.ballot = msg.Ballot
 	r.cballot = msg.Ballot
-	// TODO: update FQ, SQ
-	switch r.FQ.(type) {
-	case smr.Quorum:
+	if r.fixedMajority {
 		r.FQ = r.qs.AQ(r.ballot)
 	}
 	r.repchan = NewReplyChan(r)
@@ -407,6 +405,18 @@ func (r *Replica) handleSync(msg *MSync) {
 				}
 			}
 		}
+	}
+
+	for cmdId, propose := range r.proposes {
+		if _, exists := msg.Phases[cmdId]; exists {
+			continue
+		}
+		acc := &MAccept{
+			Replica: r.Id,
+			Ballot:  r.ballot,
+			CmdId:   cmdId,
+		}
+		r.sender.SendToClient(propose.ClientId, acc, r.cs.acceptRPC)
 	}
 
 	// if mcollect.Ids != nil {
