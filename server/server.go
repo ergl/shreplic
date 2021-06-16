@@ -20,7 +20,7 @@ import (
 	"github.com/vonaka/shreplic/n2paxos"
 	"github.com/vonaka/shreplic/paxoi"
 	"github.com/vonaka/shreplic/paxos"
-	//user imports
+	"github.com/vonaka/shreplic/unistore"
 )
 
 var (
@@ -33,6 +33,7 @@ var (
 	doN2paxos   = flag.Bool("n2paxos", false, "Use n²Paxos as the replication protocol")
 	doCurp      = flag.Bool("curp", false, "Use CURP as the replication protocol")
 	doOptCurp   = flag.Bool("curpOpt", false, "Use optimized CURP as the replication protocol")
+	doUnistore = flag.Bool("unistore", false, "Use unistore as the replication protocol")
 	cpuprofile  = flag.String("cpuprofile", "", "Cpu profile")
 	thrifty     = flag.Bool("thrifty", false, "Use only as many messages as strictly required")
 	exec        = flag.Bool("exec", true, "Execute commands")
@@ -50,8 +51,6 @@ var (
 	poolLevel   = flag.Int("pool", 1, "Level of pool usage from 0 to 2 (only for Paxoi and n²Paxos)")
 	AQreconf    = flag.Bool("AQreconf", true, "Automatically reconfigure Paxoi's slow active quorum")
 	args        = flag.String("args", "", "Custom arguments")
-
-	//user flags
 )
 
 func main() {
@@ -99,6 +98,10 @@ func main() {
 		log.Println("Starting Egalitarian Paxos replica...")
 		rep := epaxos.NewReplica(replicaId, nodeList, *thrifty, *exec, *lread,
 			*dreply, *beacon, *durable, *batchWait, *tConf, *maxfailures, ps)
+		rpc.Register(rep)
+	} else if *doUnistore {
+		log.Println("Starting Unistore replica...")
+		rep := unistore.NewReplica(replicaId, nodeList, *maxfailures, *exec, *dreply, *args, ps)
 		rpc.Register(rep)
 	} else if *doPaxoi {
 		log.Println("Starting Paxoi replica...")
