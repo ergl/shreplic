@@ -211,10 +211,10 @@ func (master *Master) Register(args *defs.RegisterArgs, reply *defs.RegisterRepl
 		if err == nil {
 			master.latencies[index], _ =
 				strconv.ParseFloat(strings.Split(string(out), "/")[4], 64)
-			log.Printf("node %v [%v] -> %v", index,
+			log.Printf("node %v [%v] -> %vms away", index,
 				master.nodeList[index], master.latencies[index])
 		} else {
-			log.Fatal("cannot connect to " + addr)
+			log.Fatal("cannot determine ping latency to " + addr)
 		}
 	}
 
