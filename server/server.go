@@ -84,7 +84,11 @@ func main() {
 
 	log.Printf("Server starting on port %d", *portnum)
 	fullAddr := fmt.Sprintf("%s:%d", *masterAddr, *masterPort)
-	replicaId, nodeList, isLeader := registerWithMaster(fullAddr)
+	replicaId, nodeList, isLeader, err := registerWithMaster(fullAddr, 10, 100)
+	if err != nil {
+		log.Fatal("Couldn't connect to master, aborting")
+		return
+	}
 
 	if *maxfailures == -1 {
 		*maxfailures = (len(nodeList) - 1) / 2
@@ -136,7 +140,7 @@ func main() {
 	http.Serve(l, nil)
 }
 
-func registerWithMaster(masterAddr string) (int, []string, bool) {
+func registerWithMaster(masterAddr string, retries int, backoff_ms int) (replicaId int, nodeList []string, isLeader bool, exit_err error) {
 	var reply defs.RegisterReply
 	args := &defs.RegisterArgs{
 		Addr: *myAddr,
@@ -144,29 +148,36 @@ func registerWithMaster(masterAddr string) (int, []string, bool) {
 	}
 	log.Printf("connecting to: %v", masterAddr)
 
+	current_retry := 0
 	for {
 		mcli, err := rpc.DialHTTP("tcp", masterAddr)
 		if err == nil {
 			for {
 				// TODO: This is an active wait, not cool.
 				err = mcli.Call("Master.Register", args, &reply)
-				if err == nil {
-					if reply.Ready {
-						break
-					}
-					time.Sleep(4)
-				} else {
-					log.Printf("%v", err)
+				if err == nil && reply.Ready {
+					replicaId = reply.ReplicaId
+					nodeList = reply.NodeList
+					isLeader = reply.IsLeader
+					return
 				}
+				if current_retry == retries {
+					exit_err = err
+					return
+				}
+				current_retry++
+				log.Printf("Master.Register error: %v, retrying", err)
+				time.Sleep(time.Duration(backoff_ms) * time.Millisecond)
 			}
-			break
-		} else {
-			log.Printf("%v", err)
 		}
-		time.Sleep(4)
+		if current_retry == retries {
+			exit_err = err
+			return
+		}
+		current_retry++
+		log.Printf("rpc.DialHTTP error: %v, retrying", err)
+		time.Sleep(time.Duration(backoff_ms) * time.Millisecond)
 	}
-
-	return reply.ReplicaId, reply.NodeList, reply.IsLeader
 }
 
 func catchKill(interrupt chan os.Signal) {
