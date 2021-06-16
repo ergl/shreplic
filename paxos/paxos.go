@@ -79,26 +79,41 @@ type LeaderBookkeeping struct {
 }
 
 func NewReplica(id int, peerAddrList []string, Isleader bool, thrifty bool, exec bool, lread bool, dreply bool, durable bool, batchWait int, f int, ps map[string]struct{}) *Replica {
-	r := &Replica{smr.NewReplica(id, f, peerAddrList, thrifty, exec, lread, dreply, ps),
-		make(chan fastrpc.Serializable, smr.CHAN_BUFFER_SIZE),
-		make(chan fastrpc.Serializable, smr.CHAN_BUFFER_SIZE),
-		make(chan fastrpc.Serializable, smr.CHAN_BUFFER_SIZE),
-		make(chan fastrpc.Serializable, smr.CHAN_BUFFER_SIZE),
-		make(chan fastrpc.Serializable, smr.CHAN_BUFFER_SIZE),
-		make(chan fastrpc.Serializable, 3*smr.CHAN_BUFFER_SIZE),
-		make(chan int32, 3*smr.CHAN_BUFFER_SIZE),
-		0, 0, 0, 0, 0, 0,
-		false,
-		make([]*Instance, 15*1024*1024),
-		-1,
-		-1,
-		make([]int32, len(peerAddrList)),
-		-1,
-		false,
-		0,
-		true,
-		-1,
-		batchWait, 0, 0}
+	makeChanWithSize := func(size int) chan fastrpc.Serializable {
+		return make(chan fastrpc.Serializable, size)
+	}
+	makeChan := func() chan fastrpc.Serializable {
+		return makeChanWithSize(smr.CHAN_BUFFER_SIZE)
+	}
+	r := &Replica{
+		Replica:               smr.NewReplica(id, f, peerAddrList, thrifty, exec, lread, dreply, ps),
+		prepareChan:           makeChan(),
+		acceptChan:            makeChan(),
+		commitChan:            makeChan(),
+		commitShortChan:       makeChan(),
+		prepareReplyChan:      makeChan(),
+		acceptReplyChan:       makeChanWithSize(3 * smr.CHAN_BUFFER_SIZE),
+		instancesToRecover:    make(chan int32, 3*smr.CHAN_BUFFER_SIZE),
+		prepareRPC:            0,
+		acceptRPC:             0,
+		commitRPC:             0,
+		commitShortRPC:        0,
+		prepareReplyRPC:       0,
+		acceptReplyRPC:        0,
+		IsLeader:              false,
+		instanceSpace:         make([]*Instance, 15*1024*1024),
+		crtInstance:           -1,
+		maxRecvBallot:         -1,
+		defaultBallot:         make([]int32, len(peerAddrList)),
+		smallestDefaultBallot: -1,
+		Shutdown:              false,
+		counter:               0,
+		flush:                 true,
+		executedUpTo:          -1,
+		batchWait:             batchWait,
+		totalRecNum:           0,
+		totalSendNum:          0,
+	}
 
 	r.Durable = durable
 
