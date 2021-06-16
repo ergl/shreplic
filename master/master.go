@@ -80,9 +80,9 @@ func (master *Master) run() {
 			break
 		}
 		master.lock.Unlock()
-		time.Sleep(100000000)
+		time.Sleep(100 * time.Millisecond)
 	}
-	time.Sleep(2000000000)
+	time.Sleep(2 * time.Second)
 
 	for i := 0; i < master.N; {
 		var err error
@@ -90,7 +90,7 @@ func (master *Master) run() {
 		master.nodes[i], err = rpc.DialHTTP("tcp", addr)
 		if err != nil {
 			log.Printf("Error connecting to replica %d (%v), retrying...", i, addr)
-			time.Sleep(1000000000)
+			time.Sleep(1 * time.Second)
 		} else {
 			btlReply := smr.NewBeTheLeaderReply()
 			if master.leader[i] {
@@ -155,7 +155,7 @@ func (master *Master) run() {
 	}
 
 	for {
-		time.Sleep(1000 * 1000 * 1000 * 3)
+		time.Sleep(3 * time.Second)
 		new_leader = false
 		for i, node := range master.nodes {
 			pingNode(i, node)
